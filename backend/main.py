@@ -117,6 +117,7 @@ async def clerk_webhook(request: Request):
             # Upsert into Supabase users table
             user_data = {
                 "id": user_id,
+                "clerk_id": user_id,
                 "email": email,
                 "username": username,
             }
