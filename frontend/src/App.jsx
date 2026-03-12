@@ -1,125 +1,353 @@
 import { useState, lazy, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { SignInButton, SignedIn, SignedOut, UserButton, useUser } from '@clerk/clerk-react';
-import { Copy, Send, Loader2 } from 'lucide-react';
-import axios from 'axios';
+import { SignedIn, SignedOut, useSignIn, useSignUp } from '@clerk/clerk-react';
+import { Loader2, Sparkles, X, Mail, Lock, Eye, EyeOff, User, Send } from 'lucide-react';
+import outrenchLogo from './assets/outrench.png';
+import Dashboard from './components/Dashboard';
 
 // Lazy-load the heavy Three.js component so it doesn't block the dashboard
 const SpectralGhost = lazy(() => import('./components/SpectralGhost'));
 
-function App() {
-  const { user } = useUser();
-  const navigate = useNavigate();
-  const [platform, setPlatform] = useState('reddit');
+// ── Reusable styled input ────────────────────────────────────────────────────
+function AuthInput({ icon: Icon, type = 'text', placeholder, value, onChange, right }) {
+  return (
+    <div style={{ position: 'relative', width: '100%' }}>
+      <div style={{
+        position: 'absolute', left: 14, top: '50%',
+        transform: 'translateY(-50%)',
+        color: 'rgba(255,255,255,0.3)', pointerEvents: 'none',
+        display: 'flex', alignItems: 'center',
+      }}>
+        <Icon size={16} />
+      </div>
+      <input
+        type={type}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        style={{
+          width: '100%',
+          background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 12,
+          padding: '13px 44px',
+          color: '#fff',
+          fontSize: 15,
+          outline: 'none',
+          transition: 'border-color 0.2s',
+          boxSizing: 'border-box',
+        }}
+        onFocus={e => e.target.style.borderColor = 'rgba(99,102,241,0.7)'}
+        onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+      />
+      {right && (
+        <div style={{
+          position: 'absolute', right: 14, top: '50%',
+          transform: 'translateY(-50%)',
+        }}>
+          {right}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Auth Bottom Sheet ─────────────────────────────────────────────────────────
+function AuthSheet({ isOpen, onClose }) {
+  const { signIn, setActive: setSignInActive } = useSignIn();
+  const { signUp, setActive: setSignUpActive } = useSignUp();
+
+  const [tab, setTab] = useState('signin'); // 'signin' | 'signup'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
-  const [bio, setBio] = useState('');
-  const [latestPost, setLatestPost] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [code, setCode] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const [generatedMessage, setGeneratedMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const reset = () => {
+    setEmail(''); setPassword(''); setUsername('');
+    setCode(''); setVerifying(false);
+    setError(''); setLoading(false); setShowPass(false);
+  };
 
-  const handleGenerate = async () => {
-    if (!username.trim()) return;
+  const switchTab = (t) => { setTab(t); reset(); };
 
-    setIsLoading(true);
-    setGeneratedMessage('');
-    setCopied(false);
-
+  // ── Sign In ────────────────────────────────────────────────────────────────
+  const handleSignIn = async (e) => {
+    e.preventDefault();
+    setError(''); setLoading(true);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const response = await axios.post(`${apiUrl}/api/generate`, {
-        username: username.trim(),
-        target_platform: platform,
-        bio: bio.trim(),
-        latest_post: latestPost.trim()
+      const result = await signIn.create({ identifier: email, password });
+      if (result.status === 'complete') {
+        await setSignInActive({ session: result.createdSessionId });
+        onClose();
+      }
+    } catch (err) {
+      setError(err.errors?.[0]?.message || 'Sign in failed. Please try again.');
+    } finally { setLoading(false); }
+  };
+
+  // ── Sign Up ────────────────────────────────────────────────────────────────
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    setError(''); setLoading(true);
+    try {
+      await signUp.create({
+        username,
+        emailAddress: email,
+        password,
       });
-
-      setGeneratedMessage(response.data.message);
-    } catch (error) {
-      console.error('Error generating message:', error);
-      alert('Failed to generate message. Check console for details.');
-    } finally {
-      setIsLoading(false);
-    }
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+      setVerifying(true);
+    } catch (err) {
+      setError(err.errors?.[0]?.message || 'Sign up failed. Please try again.');
+    } finally { setLoading(false); }
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(generatedMessage);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  // ── Verify email code ──────────────────────────────────────────────────────
+  const handleVerify = async (e) => {
+    e.preventDefault();
+    setError(''); setLoading(true);
+    try {
+      const result = await signUp.attemptEmailAddressVerification({ code });
+      if (result.status === 'complete') {
+        await setSignUpActive({ session: result.createdSessionId });
+        onClose();
+      }
+    } catch (err) {
+      setError(err.errors?.[0]?.message || 'Invalid code. Please try again.');
+    } finally { setLoading(false); }
   };
+
+  const sheetStyle = {
+    position: 'fixed',
+    bottom: 0, left: 0, right: 0,
+    zIndex: 999,
+    background: 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.01))',
+    backdropFilter: 'blur(30px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+    borderTop: '1px solid rgba(255,255,255,0.15)',
+    boxShadow: '0 -15px 50px rgba(99, 102, 241, 0.2), inset 0 1px 0 rgba(255,255,255,0.3)',
+    borderRadius: '32px 32px 0 0',
+    padding: '12px 24px 48px',
+    transform: isOpen ? 'translateY(0)' : 'translateY(100%)',
+    transition: 'transform 0.45s cubic-bezier(0.32, 0.72, 0, 1)',
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    maxHeight: '92vh', overflowY: 'auto',
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(0,0,0,0.65)',
+        backdropFilter: 'blur(6px)',
+        zIndex: 998,
+        opacity: isOpen ? 1 : 0,
+        pointerEvents: isOpen ? 'auto' : 'none',
+        transition: 'opacity 0.35s ease',
+      }} />
+
+      <div style={sheetStyle}>
+        {/* Holographic glow line */}
+        <div style={{
+          position: 'absolute', top: 0, left: '15%', right: '15%', height: 1.5,
+          background: 'linear-gradient(90deg, transparent, rgba(99,102,241,0.8), rgba(236,40,165,0.8), rgba(16,185,129,0.8), transparent)',
+          boxShadow: '0 2px 10px rgba(236,40,165,0.5)'
+        }} />
+
+        {/* Drag handle */}
+        <div style={{ width: 40, height: 4, borderRadius: 99, background: 'rgba(255,255,255,0.25)', margin: '14px 0 28px', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
+
+        {/* Close */}
+        <button onClick={onClose} style={{
+          position: 'absolute', top: 16, right: 20,
+          background: 'rgba(255,255,255,0.08)', border: 'none',
+          borderRadius: 50, width: 32, height: 32,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', color: 'white',
+        }}><X size={16} /></button>
+
+        <div style={{ width: '100%', maxWidth: 380 }}>
+
+          {/* ── Tab switcher ── */}
+          {!verifying && (
+            <div style={{
+              display: 'flex', gap: 4,
+              background: 'rgba(255,255,255,0.05)',
+              borderRadius: 12, padding: 4,
+              marginBottom: 28,
+            }}>
+              {['signin', 'signup'].map(t => (
+                <button
+                  key={t}
+                  onClick={() => switchTab(t)}
+                  style={{
+                    flex: 1, padding: '10px 0',
+                    borderRadius: 9, border: 'none',
+                    fontWeight: 600, fontSize: 14,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    background: tab === t ? 'rgba(99,102,241,0.85)' : 'transparent',
+                    color: tab === t ? '#fff' : 'rgba(255,255,255,0.4)',
+                  }}
+                >
+                  {t === 'signin' ? 'Sign In' : 'Create Account'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── Verify email ── */}
+          {verifying ? (
+            <form onSubmit={handleVerify} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ textAlign: 'center', marginBottom: 8 }}>
+                <p style={{ color: '#fff', fontWeight: 700, fontSize: 20, marginBottom: 6 }}>Check your email</p>
+                <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14 }}>We sent a 6-digit code to <strong style={{ color: '#818cf8' }}>{email}</strong></p>
+              </div>
+              <AuthInput icon={Mail} placeholder="Enter verification code" value={code} onChange={e => setCode(e.target.value)} />
+              {error && <p style={{ color: '#f87171', fontSize: 13, textAlign: 'center' }}>{error}</p>}
+              <SubmitButton loading={loading} label="Verify Email" />
+              <button type="button" onClick={() => { setVerifying(false); setError(''); }}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: 13, cursor: 'pointer', marginTop: 4 }}>
+                ← Back
+              </button>
+            </form>
+
+          ) : tab === 'signin' ? (
+            /* ── Sign In Form ── */
+            <form onSubmit={handleSignIn} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <AuthInput icon={Mail} type="email" placeholder="Email address" value={email} onChange={e => setEmail(e.target.value)} />
+              <AuthInput
+                icon={Lock} type={showPass ? 'text' : 'password'} placeholder="Password"
+                value={password} onChange={e => setPassword(e.target.value)}
+                right={
+                  <button type="button" onClick={() => setShowPass(v => !v)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.4)', display: 'flex' }}>
+                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                }
+              />
+              {error && <p style={{ color: '#f87171', fontSize: 13 }}>{error}</p>}
+              <SubmitButton loading={loading} label="Sign In" />
+            </form>
+
+          ) : (
+            /* ── Sign Up Form ── */
+            <form onSubmit={handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <AuthInput icon={User} placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} />
+              <AuthInput icon={Mail} type="email" placeholder="Email address" value={email} onChange={e => setEmail(e.target.value)} />
+              <AuthInput
+                icon={Lock} type={showPass ? 'text' : 'password'} placeholder="Create a password"
+                value={password} onChange={e => setPassword(e.target.value)}
+                right={
+                  <button type="button" onClick={() => setShowPass(v => !v)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.4)', display: 'flex' }}>
+                    {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                }
+              />
+              {error && <p style={{ color: '#f87171', fontSize: 13 }}>{error}</p>}
+              <SubmitButton loading={loading} label="Create Account" />
+            </form>
+          )}
+
+          {/* Fine print */}
+          {!verifying && (
+            <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.25)', fontSize: 12, marginTop: 20 }}>
+              By continuing you agree to our Terms & Privacy Policy
+            </p>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Shared submit button ──────────────────────────────────────────────────────
+function SubmitButton({ loading, label }) {
+  return (
+    <button
+      type="submit"
+      disabled={loading}
+      style={{
+        width: '100%',
+        padding: '14px',
+        borderRadius: 12,
+        border: 'none',
+        background: loading ? 'rgba(99,102,241,0.4)' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+        color: '#fff',
+        fontWeight: 700,
+        fontSize: 15,
+        cursor: loading ? 'not-allowed' : 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        transition: 'opacity 0.2s',
+        marginTop: 4,
+        boxShadow: '0 0 30px rgba(99,102,241,0.35)',
+      }}
+    >
+      {loading ? <><Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Working...</> : label}
+    </button>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+function App() {
+  const [authOpen, setAuthOpen] = useState(false);
 
   return (
     <>
       {/* ── LANDING PAGE (signed out) ─────────────────────────────── */}
       <SignedOut>
-        <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+        {/* Inject CSS to replace the native browser cursor with a Ghost globally on this page */}
+        <style>{`
+          .landing-cursor-override,
+          .landing-cursor-override * {
+            cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>') 16 16, auto !important;
+          }
+        `}</style>
+        
+        <div className="landing-cursor-override" style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+
           {/* Ghost animation fills the screen */}
           <Suspense fallback={<div style={{ width: '100vw', height: '100vh', background: '#0a0a0a' }} />}>
             <SpectralGhost
               loadingText="Summoning spirits"
               quote={<>Outreach<br />Engine</>}
-              author="Outrench"
+              author="The smarter way to reach people"
             />
           </Suspense>
 
-          {/* Floating navbar on top */}
+          {/* Floating navbar */}
           <nav style={{
             position: 'absolute', top: 0, left: 0, right: 0,
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '20px 32px',
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            padding: '24px',
             zIndex: 100,
           }}>
-            <span style={{ color: 'white', fontWeight: 800, fontSize: 22, letterSpacing: '-0.04em', fontFamily: 'system-ui' }}>
-              Outrench
-            </span>
-
-            <SignInButton mode="modal">
-              <button style={{
-                background: 'rgba(255,255,255,0.1)',
-                border: '1px solid rgba(255,255,255,0.25)',
-                backdropFilter: 'blur(12px)',
-                color: 'white',
-                padding: '10px 22px',
-                borderRadius: 50,
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: 'pointer',
-                transition: 'background 0.2s',
-              }}
-                onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
-                onMouseOut={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-              >
-                Sign In
-              </button>
-            </SignInButton>
+            {/* Logo, aligned center and larger */}
+            <img
+              src={outrenchLogo}
+              alt="Outrench"
+              style={{ height: 48, objectFit: 'contain' }}
+            />
           </nav>
 
-          {/* CTA panel — bottom centre, layered above the canvas */}
+          {/* Bottom CTA */}
           <div style={{
             position: 'absolute',
-            bottom: '10vh',
-            left: '50%',
+            bottom: '12vh', left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 100,
             textAlign: 'center',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 16,
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', gap: 16,
           }}>
-            <p style={{
-              fontFamily: '"PPSupplyMono", monospace',
-              fontSize: 11,
-              textTransform: 'uppercase',
-              letterSpacing: '0.15em',
-              color: 'rgba(255,255,255,0.5)',
-            }}>
-              AI-powered outreach engine
-            </p>
             <button
-              onClick={() => navigate('/sign-up')}
+              onClick={() => setAuthOpen(true)}
               style={{
                 background: 'rgba(99,102,241,0.9)',
                 border: '1px solid rgba(99,102,241,0.6)',
@@ -129,150 +357,79 @@ function App() {
                 borderRadius: 50,
                 fontWeight: 700,
                 fontSize: 15,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
+                display: 'flex', alignItems: 'center', gap: 8,
                 boxShadow: '0 0 40px rgba(99,102,241,0.4)',
                 transition: 'transform 0.2s, box-shadow 0.2s',
-                whiteSpace: 'nowrap',
               }}
               onMouseOver={e => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.boxShadow = '0 0 60px rgba(99,102,241,0.6)'; }}
               onMouseOut={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 0 40px rgba(99,102,241,0.4)'; }}
             >
-              Get Started <Send size={15} />
+              {/* Invisible spacer ensures the word "Get Started" forms the true optical center */}
+              <div style={{ width: 15 }} />
+              <span>Get Started</span>
+              <Send size={15} />
             </button>
           </div>
+
+          {/* Bottom Left Version */}
+          <div style={{
+            position: 'absolute', bottom: '24px', left: '24px',
+            zIndex: 100,
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            padding: '8px 14px',
+            borderRadius: '10px',
+            color: 'rgba(255,255,255,0.4)',
+            fontSize: '11px',
+            fontFamily: '"PPSupplyMono", monospace',
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+          }}>
+            v1.0.0_beta
+          </div>
+
+          {/* Bottom Right Links */}
+          <div style={{
+            position: 'absolute', bottom: '24px', right: '24px',
+            zIndex: 100,
+            display: 'flex', gap: '20px',
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            padding: '10px 24px',
+            borderRadius: '50px',
+          }}>
+            {['About', 'Privacy', 'Terms'].map(link => (
+              <a
+                key={link}
+                href={`#${link.toLowerCase()}`}
+                style={{
+                  color: 'rgba(255,255,255,0.5)',
+                  fontSize: '12px',
+                  textDecoration: 'none',
+                  fontWeight: 500,
+                  transition: 'color 0.2s',
+                  fontFamily: 'system-ui',
+                }}
+                onMouseOver={e => e.currentTarget.style.color = '#fff'}
+                onMouseOut={e => e.currentTarget.style.color = 'rgba(255,255,255,0.5)'}
+              >
+                {link}
+              </a>
+            ))}
+          </div>
         </div>
+
+        {/* Auth bottom sheet */}
+        <AuthSheet isOpen={authOpen} onClose={() => setAuthOpen(false)} />
       </SignedOut>
 
       {/* ── DASHBOARD (signed in) ─────────────────────────────────── */}
       <SignedIn>
-        <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col w-full font-sans">
-          {/* Navbar */}
-          <header className="px-8 py-5 border-b border-neutral-800 flex justify-between items-center bg-neutral-900/50 backdrop-blur-md sticky top-0 z-10 w-full">
-            <div className="flex items-center">
-              <h1 className="text-xl font-bold tracking-tight text-white" style={{ letterSpacing: '-0.04em' }}>Outrench</h1>
-            </div>
-            <UserButton appearance={{ elements: { userButtonAvatarBox: "w-9 h-9" } }} />
-          </header>
-
-          {/* Main Content Area */}
-          <main className="flex-1 max-w-5xl mx-auto w-full p-8 flex flex-col items-center">
-            <div className="text-center mb-10 w-full mt-8">
-              <h2 className="text-3xl font-bold mb-2">Welcome back, {user?.firstName || 'there'} 👋</h2>
-              <p className="text-neutral-400">Generate personalized outreach messages that actually convert.</p>
-            </div>
-
-            <div className="w-full flex flex-col md:flex-row gap-8 items-start justify-center">
-
-              {/* Input Form Card */}
-              <div className="bg-neutral-900/80 border border-neutral-800 p-6 rounded-2xl w-full max-w-md shadow-2xl backdrop-blur-sm">
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-neutral-400 mb-2">Target Platform</label>
-                  <div className="flex bg-neutral-950 rounded-lg p-1 border border-neutral-800">
-                    {['reddit', 'twitter', 'email'].map((p) => (
-                      <button
-                        key={p}
-                        onClick={() => setPlatform(p)}
-                        className={`flex-1 py-2 text-sm font-medium rounded-md capitalize transition-all ${platform === p
-                            ? 'bg-neutral-800 text-white shadow-sm'
-                            : 'text-neutral-500 hover:text-neutral-300'
-                          }`}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-400 mb-1">Target Handle/Username</label>
-                    <input
-                      type="text"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder="e.g. u/startup_fanatic"
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white placeholder-neutral-600 transition-colors"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-400 mb-1">User Bio (Optional Context)</label>
-                    <input
-                      type="text"
-                      value={bio}
-                      onChange={(e) => setBio(e.target.value)}
-                      placeholder="e.g. Needs a better developer tool..."
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white placeholder-neutral-600 transition-colors"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-400 mb-1">Latest Post/Complaint (Optional)</label>
-                    <textarea
-                      value={latestPost}
-                      onChange={(e) => setLatestPost(e.target.value)}
-                      placeholder="e.g. 'I spend so much time struggling with X...'"
-                      rows={3}
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white placeholder-neutral-600 transition-colors resize-none"
-                    />
-                  </div>
-
-                  <button
-                    onClick={handleGenerate}
-                    disabled={!username.trim() || isLoading}
-                    className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-all"
-                  >
-                    {isLoading ? (
-                      <><Loader2 size={18} className="animate-spin" /> Generating...</>
-                    ) : (
-                      <><Sparkles size={18} /> Generate Magic Reply</>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Results Card */}
-              <div className="w-full max-w-md flex flex-col gap-4">
-                <div className={`bg-neutral-900/80 border ${generatedMessage ? 'border-indigo-500/50 shadow-indigo-500/10 shadow-xl' : 'border-neutral-800'} p-6 rounded-2xl flex-1 flex flex-col justify-between transition-all duration-300 relative overflow-hidden backdrop-blur-sm`}>
-
-                  {generatedMessage && <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500" />}
-
-                  {generatedMessage ? (
-                    <div className="flex-1 flex flex-col">
-                      <h3 className="text-sm font-medium text-indigo-400 mb-4 flex items-center gap-2">
-                        <Sparkles size={14} /> Generated for @{username}
-                      </h3>
-                      <p className="text-white text-lg leading-relaxed flex-1 italic">
-                        "{generatedMessage}"
-                      </p>
-
-                      <button
-                        onClick={copyToClipboard}
-                        className="mt-6 w-full bg-white hover:bg-neutral-200 text-black font-semibold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"
-                      >
-                        {copied ? (
-                          <span className="text-green-600 font-bold">Copied!</span>
-                        ) : (
-                          <><Copy size={18} /> Copy to Clipboard</>
-                        )}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 text-center min-h-[200px]">
-                      <Send size={32} className="mb-4 opacity-20" />
-                      <p>Enter a target profile and context to generate</p>
-                      <p className="text-sm">your personalized outreach message.</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-            </div>
-          </main>
-        </div>
+        <Dashboard />
       </SignedIn>
     </>
   );

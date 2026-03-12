@@ -177,6 +177,9 @@
   text-transform: uppercase;
   opacity: 0.7;
   margin-top: 2vh;
+  display: inline-block;
+  letter-spacing: 0.15em;
+  margin-right: -0.15em; /* Optical alignment fix to cancel trailing space */
 }
 
 /* Canvas styling */

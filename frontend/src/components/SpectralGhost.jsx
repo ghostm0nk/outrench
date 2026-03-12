@@ -17,8 +17,6 @@ export default function SpectralGhost({ quote, author, loadingText }) {
     const container = containerRef.current;
     if (!container) return;
 
-    let cancelled = false; // guard against StrictMode double-invoke
-
     // ─── Preloader ──────────────────────────────────────────────────
     let isComplete = false;
     let loadingSteps = 0;
@@ -457,7 +455,6 @@ export default function SpectralGhost({ quote, author, loadingText }) {
     let lastParticleTime = 0;
 
     function forceInitialRender() {
-      if (cancelled) return;
       for (let i = 0; i < 3; i++) composer.render();
       for (let i = 0; i < 10; i++) createParticle();
       composer.render();
@@ -581,7 +578,6 @@ export default function SpectralGhost({ quote, author, loadingText }) {
 
     // ─── Cleanup (runs when component unmounts) ──────────────────────
     return () => {
-      cancelled = true;
       cancelAnimationFrame(animFrameId);
       clearTimeout(initTimer);
       clearTimeout(resizeTimeout);
@@ -634,7 +630,7 @@ export default function SpectralGhost({ quote, author, loadingText }) {
           <h1 className="quote">
             {quote || <>Veil of Dust<br />Trail of Ash<br />Heart of Ice</>}
           </h1>
-          <span className="author">{author || 'Whispers through memory'}</span>
+          {author && <span className="author">{author}</span>}
         </div>
       </div>
     </div>
