@@ -12,11 +12,14 @@
   "dependencies": {
     "@clerk/clerk-react": "^5.61.3",
     "@supabase/supabase-js": "^2.99.1",
+    "@tweakpane/core": "^2.0.5",
     "axios": "^1.13.6",
     "lucide-react": "^0.577.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^7.13.1"
+    "react-router-dom": "^7.13.1",
+    "three": "^0.183.2",
+    "tweakpane": "^4.0.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",

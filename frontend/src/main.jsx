@@ -1,6 +1,8 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import App from './App.jsx'
+import SignUpPage from './pages/SignUpPage.jsx'
 import './index.css'
 import { ClerkProvider } from '@clerk/clerk-react'
 
@@ -10,10 +12,28 @@ if (!PUBLISHABLE_KEY) {
   throw new Error("Missing Publishable Key")
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
-      <App />
+// Clerk needs to live inside BrowserRouter so it can access router context
+function ClerkWithRouter() {
+  const navigate = useNavigate()
+  return (
+    <ClerkProvider
+      publishableKey={PUBLISHABLE_KEY}
+      afterSignOutUrl="/"
+      afterSignInUrl="/"
+      routerPush={(to) => navigate(to)}
+      routerReplace={(to) => navigate(to, { replace: true })}
+    >
+      <Routes>
+        <Route path="/" element={<App />} />
+        <Route path="/sign-up/*" element={<SignUpPage />} />
+      </Routes>
     </ClerkProvider>
-  </React.StrictMode>,
+  )
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <BrowserRouter>
+    <ClerkWithRouter />
+  </BrowserRouter>,
 )
+
