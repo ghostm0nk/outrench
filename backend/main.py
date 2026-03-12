@@ -1,3 +1,4 @@
+import json
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -5,6 +6,7 @@ import os
 import httpx
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from svix.webhooks import Webhook, WebhookVerificationError
 
 # Initialize dotenv
 load_dotenv()
@@ -27,12 +29,18 @@ if not GROQ_API_KEY:
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+CLERK_WEBHOOK_SECRET = os.getenv("CLERK_WEBHOOK_SECRET")
 
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    print("Supabase client initialized successfully")
 else:
     print("Warning: Supabase credentials missing from environment")
+
+if not CLERK_WEBHOOK_SECRET:
+    print("Warning: CLERK_WEBHOOK_SECRET is missing from environment")
+
 
 class OutreachRequest(BaseModel):
     username: str
@@ -40,9 +48,11 @@ class OutreachRequest(BaseModel):
     bio: str = ""
     latest_post: str = ""
 
+
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Outrench API is running"}
+
 
 @app.post("/api/generate")
 async def generate_outreach(req: OutreachRequest):
@@ -95,36 +105,87 @@ Write a 2-3 sentence outreach message responding to their context (or just reach
         print(f"Error calling Groq API: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ── Clerk Webhook (syncs users into Supabase) ─────────────────────────────────
 @app.post("/api/webhooks/clerk")
 async def clerk_webhook(request: Request):
-    payload = await request.json()
+    """
+    Handle Clerk webhook events.
+    Verifies the Svix signature, then syncs user data into Supabase.
     
+    Supported events:
+      - user.created  → Insert new user into Supabase
+      - user.updated  → Update existing user in Supabase
+      - user.deleted  → Delete user from Supabase
+    """
+    body = await request.body()
+
+    # ── Verify webhook signature via Svix (exactly like Contynue) ──
+    svix_id = request.headers.get("svix-id", "")
+    svix_timestamp = request.headers.get("svix-timestamp", "")
+    svix_signature = request.headers.get("svix-signature", "")
+
+    if not svix_id or not svix_timestamp or not svix_signature:
+        raise HTTPException(status_code=400, detail="Missing svix headers")
+
+    try:
+        wh = Webhook(CLERK_WEBHOOK_SECRET)
+        wh.verify(
+            body,
+            {
+                "svix-id": svix_id,
+                "svix-timestamp": svix_timestamp,
+                "svix-signature": svix_signature,
+            },
+        )
+    except WebhookVerificationError:
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    payload = json.loads(body)
     event_type = payload.get("type")
     data = payload.get("data", {})
-    
-    if event_type in ["user.created", "user.updated"]:
-        # Extract user data
-        user_id = data.get("id")
-        email_addresses = data.get("email_addresses", [])
-        email = email_addresses[0].get("email_address") if email_addresses else None
-        username = data.get("username")
-        
-        if not supabase:
-            print("Supabase client not initialized")
-            raise HTTPException(status_code=500, detail="Database not configured")
-            
-        try:
-            # Upsert into Supabase users table
-            user_data = {
-                "id": user_id,
-                "clerk_id": user_id,
-                "email": email,
-                "username": username,
-            }
-            supabase.table("users").upsert(user_data).execute()
-            print(f"Successfully synced user {username or email} into Supabase")
-        except Exception as e:
-            print(f"Error syncing user to Supabase: {e}")
-            raise HTTPException(status_code=500, detail="Database sync failed")
-            
-    return {"status": "success"}
+
+    clerk_id = data.get("id")
+    if not clerk_id:
+        raise HTTPException(status_code=400, detail="Missing user ID in webhook data")
+
+    # ── Extract user fields ──
+    email = None
+    email_addresses = data.get("email_addresses", [])
+    if email_addresses:
+        primary = next(
+            (e for e in email_addresses if e.get("id") == data.get("primary_email_address_id")),
+            email_addresses[0],
+        )
+        email = primary.get("email_address")
+
+    username = data.get("username")
+
+    if not supabase:
+        print("Supabase client not initialized")
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    # ── Handle events ──
+    if event_type == "user.created":
+        supabase.table("users").insert({
+            "clerk_id": clerk_id,
+            "email": email,
+            "username": username,
+        }).execute()
+        print(f"User created in Supabase: {username or email}")
+        return {"status": "user_created"}
+
+    elif event_type == "user.updated":
+        supabase.table("users").update({
+            "email": email,
+            "username": username,
+        }).eq("clerk_id", clerk_id).execute()
+        print(f"User updated in Supabase: {username or email}")
+        return {"status": "user_updated"}
+
+    elif event_type == "user.deleted":
+        supabase.table("users").delete().eq("clerk_id", clerk_id).execute()
+        print(f"User deleted from Supabase: {clerk_id}")
+        return {"status": "user_deleted"}
+
+    return {"status": "ignored", "event": event_type}
