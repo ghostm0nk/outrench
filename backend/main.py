@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import httpx
 from dotenv import load_dotenv
+from supabase import create_client, Client
 
 # Initialize dotenv
 load_dotenv()
@@ -23,6 +24,15 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
 if not GROQ_API_KEY:
     print("Warning: GROQ_API_KEY is missing from environment")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+supabase: Client = None
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+else:
+    print("Warning: Supabase credentials missing from environment")
 
 class OutreachRequest(BaseModel):
     username: str
@@ -84,3 +94,36 @@ Write a 2-3 sentence outreach message responding to their context (or just reach
     except Exception as e:
         print(f"Error calling Groq API: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/webhooks/clerk")
+async def clerk_webhook(request: Request):
+    payload = await request.json()
+    
+    event_type = payload.get("type")
+    data = payload.get("data", {})
+    
+    if event_type in ["user.created", "user.updated"]:
+        # Extract user data
+        user_id = data.get("id")
+        email_addresses = data.get("email_addresses", [])
+        email = email_addresses[0].get("email_address") if email_addresses else None
+        username = data.get("username")
+        
+        if not supabase:
+            print("Supabase client not initialized")
+            raise HTTPException(status_code=500, detail="Database not configured")
+            
+        try:
+            # Upsert into Supabase users table
+            user_data = {
+                "id": user_id,
+                "email": email,
+                "username": username,
+            }
+            supabase.table("users").upsert(user_data).execute()
+            print(f"Successfully synced user {username or email} into Supabase")
+        except Exception as e:
+            print(f"Error syncing user to Supabase: {e}")
+            raise HTTPException(status_code=500, detail="Database sync failed")
+            
+    return {"status": "success"}
