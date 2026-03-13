@@ -36,20 +36,28 @@ export default function Channels() {
   const [tokens, setTokens] = useState({}); // e.g. { 'twitter_personal': 'token_value' }
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [isDriverActive, setIsDriverActive] = useState(false);
 
   // Check for Extension presence & Listen for data
   useEffect(() => {
     const checkDriver = () => {
-      if (window.__GHOST_DRIVER__) setIsDriverActive(true);
+      // Check for either the window variable or the DOM attribute
+      const hasAttr = document.documentElement.getAttribute('data-ghost-driver') === 'active';
+      if (window.__GHOST_DRIVER__ || hasAttr) {
+        setIsDriverActive(true);
+      }
     };
     const timer = setInterval(checkDriver, 1000);
 
     const handleMessage = (event) => {
       if (event.data.type === "PROFILE_DATA_READY") {
         const profile = event.data.data;
-        // Automatically trigger backend sync with this data
         syncToBackend(profile);
+      }
+      if (event.data.type === "SESSION_NOT_FOUND") {
+        setError(event.data.error);
+        setIsSyncing(false);
       }
     };
 
@@ -96,6 +104,8 @@ export default function Channels() {
     } catch (err) {
       console.error(err);
       setError("Failed to sync from Ghost Driver.");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -105,8 +115,12 @@ export default function Channels() {
 
   const handleConnect = () => {
     setError('');
+    setIsSyncing(true);
     // Dispatch request to extension
     window.postMessage({ type: "SYNC_PROFILE_REQUEST" }, "*");
+    
+    // Safety timeout
+    setTimeout(() => setIsSyncing(false), 5000);
   };
 
   const handleDisconnect = async () => {
@@ -379,23 +393,32 @@ export default function Channels() {
               ) : (
                 <button 
                   onClick={handleConnect}
+                  disabled={isSyncing}
                   style={{ 
                     width: '100%',
-                    background: 'linear-gradient(135deg, #f59e0b, #ea580c)', 
+                    background: isSyncing ? 'rgba(255,255,255,0.05)' : 'linear-gradient(135deg, #f59e0b, #ea580c)', 
                     border: 'none', 
-                    color: '#fff', 
+                    color: isSyncing ? 'rgba(255,255,255,0.3)' : '#fff', 
                     padding: '14px 32px', 
                     borderRadius: 12, 
                     fontWeight: 700, 
-                    cursor: 'pointer',
+                    cursor: isSyncing ? 'not-allowed' : 'pointer',
                     fontSize: 16,
-                    boxShadow: '0 4px 20px rgba(245,158,11,0.3)',
-                    transition: 'all 0.2s'
+                    boxShadow: isSyncing ? 'none' : '0 4px 20px rgba(245,158,11,0.3)',
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 10
                   }}
-                  onMouseOver={(e) => e.target.style.transform = 'scale(1.02)'}
-                  onMouseOut={(e) => e.target.style.transform = 'scale(1)'}
+                  onMouseOver={(e) => !isSyncing && (e.target.style.transform = 'scale(1.02)')}
+                  onMouseOut={(e) => !isSyncing && (e.target.style.transform = 'scale(1)')}
                 >
-                  Awaken & Sync Spirit
+                  {isSyncing ? (
+                    <>
+                      <RefreshCw size={18} className="spin-fast" /> Connecting...
+                    </>
+                  ) : 'Awaken & Sync Spirit'}
                 </button>
               )}
 

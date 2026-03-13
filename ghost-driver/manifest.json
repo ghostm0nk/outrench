@@ -10,16 +10,14 @@
     "http://localhost:5173/*",
     "https://outrench.vercel.app/*"
   ],
-  "action": {
-    "default_popup": "popup.html"
-  },
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["https://twitter.com/*", "https://x.com/*"],
-      "js": ["content.js"]
+      "matches": ["https://twitter.com/*", "https://x.com/*", "http://localhost:5173/*", "https://outrench.vercel.app/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
     }
   ]
 }

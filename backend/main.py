@@ -125,6 +125,9 @@ class ChannelCredentialsRequest(BaseModel):
     platform: str
     account_type: str
     auth_token: str
+    handle: Optional[str] = None
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 
 # ── Content Safeguards (server-side) ───────────────────────────────────────────
@@ -403,14 +406,20 @@ async def connect_channel(req: ChannelCredentialsRequest):
     avatar_url = None
 
     if req.platform == "twitter":
-        try:
-            profile = verify_twitter_credentials(req.auth_token)
-            handle = profile["handle"]
-            name = profile["name"]
-            avatar_url = profile["avatar_url"]
-        except Exception as e:
-            # If the token is dead or invalid, throw a 401 right back to the frontend
-            raise HTTPException(status_code=401, detail=str(e))
+        if req.auth_token == "GHOST_DRIVER_SESSION":
+            # Direct sync from Ghost Driver, use provided fields
+            handle = req.handle
+            name = req.name
+            avatar_url = req.avatar_url
+        else:
+            try:
+                profile = verify_twitter_credentials(req.auth_token)
+                handle = profile["handle"]
+                name = profile["name"]
+                avatar_url = profile["avatar_url"]
+            except Exception as e:
+                # If the token is dead or invalid, throw a 401 right back to the frontend
+                raise HTTPException(status_code=401, detail=str(e))
     else:
         # Placeholder for TikTok or others
         pass
