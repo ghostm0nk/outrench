@@ -1,4 +1,7 @@
-# Outrench Dashboard — Design Notes
+# Outrench Dashboard - Design & UX Decisions
+Mascot Name: **Spirit**
+
+---
 > Last updated: 2026-03-13
 
 ---
@@ -107,9 +110,28 @@ Each tab is also a **separate full page view**.
   - How the agent operates on platforms
   - Build this **after** the full product is working end-to-end.
 
+
 ---
 
+## Backend Architecture
+- **Stable Foundation**: Bypassed heavy community libraries (like `supabase-py` and `httpx`) which have binary/typing conflicts on Windows/Python 3.14.
+- **Lightweight REST**: Using a custom `SupabaseRestWrapper` built on the standard `requests` library. This maximizes stability for both local dev and Render.com deployments.
+- **WebSocket Streaming**: Real-time terminal updates are handled via FastAPI WebSockets (`/api/agent/stream`).
 
+---
+
+## Agent Planning System
+- **Dynamic Brain**: Every task entered into the command input is processed by a 2-step Groq chain:
+  1. **Acknowledge**: Instant context-aware reply to the user.
+  2. **Plan**: LLM breaks the command into nested logical steps (search, filter, message, success).
+- **Infinite Variety**: Since the steps come from an LLM, the terminal logs won't look repetitive; the bot will describe exactly what it's "doing" for that specific query.
+
+---
+
+## Credentials & Accounts (Upcoming)
+- We will soon implement a secure way to store and inject platform credentials (cookies, API keys, etc.) so the simulated steps become real browser/API actions.
+
+---
 1. **Bot health indicator** — How does the user know if the bot is running, paused, or errored? Need a visible status signal.
 2. **Bot activity format** — Plain English summary cards? Timeline? Expandable logs?
 3. **Task confirmation flow** — After submitting in Notes, how does the user know it was received?

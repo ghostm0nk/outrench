@@ -7,6 +7,7 @@ import os
 import requests
 from dotenv import load_dotenv
 from svix.webhooks import Webhook, WebhookVerificationError
+from agent_logic import stream_agent_logic
 
 # Initialize dotenv
 load_dotenv()
@@ -394,32 +395,8 @@ async def agent_stream(websocket: WebSocket):
             data = await websocket.receive_text()
             print(f"Agent received task: {data}")
             
-            # 1. AI Response (immediate acknowledgment)
-            response_text = f"Got it. I'll execute the following task: '{data}'. Queueing now."
-            await websocket.send_json({
-                "type": "ai_response",
-                "text": response_text
-            })
-            
-            # Wait a tiny bit for realism
-            await asyncio.sleep(1)
-            
-            # 2. Simulated Agent Activity (you'll replace this with real LangChain/CrewAI logic later)
-            activities = [
-                {"type": "info", "text": "Initializing browser context...", "delay": 1.5},
-                {"type": "info", "text": "Navigating to LinkedIn search...", "delay": 2.0},
-                {"type": "warn", "text": "Rate limit detected. Implementing dynamic backoff...", "delay": 1.0},
-                {"type": "success", "text": "Successfully retrieved 15 profiles.", "delay": 2.5},
-                {"type": "info", "text": "Drafting personalized messages...", "delay": 1.5},
-                {"type": "success", "text": "Task completed successfully. Queue is open.", "delay": 1.0},
-            ]
-            
-            for act in activities:
-                await asyncio.sleep(act["delay"])
-                await websocket.send_json({
-                    "type": act["type"],
-                    "text": act["text"]
-                })
+            # Use the new agent logic to plan and stream execution
+            await stream_agent_logic(data, websocket)
                 
     except WebSocketDisconnect:
         print("Agent WebSocket disconnected.")

@@ -1,8 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   CheckCircle2, AlertTriangle, XCircle,
-  ChevronDown, ChevronUp, Send, ListTodo,
+  ChevronDown,
+  ChevronUp,
   Terminal as TerminalIcon,
+  Send,
+  MessageSquare,
+  Activity,
+  ZoomIn,
+  ZoomOut,
+  ListTodo
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,16 +88,16 @@ export default function Station() {
     e.preventDefault();
     const cmd = input.trim();
     if (!cmd) return;
-    
+
     // Echo the command into the terminal immediately
     pushLine('cmd', cmd);
-    
+
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(cmd);
     } else {
       pushLine('error', 'Agent disconnected. Cannot send command.');
     }
-    
+
     setInput('');
   };
 
@@ -234,10 +241,15 @@ function NotificationBar({ status, message, detail, expanded, onToggle }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Terminal Panel (left)
 // ─────────────────────────────────────────────────────────────────────────────
 function TerminalPanel({ lines }) {
   const bottomRef = useRef(null);
+  const [fontSize, setFontSize] = useState(13); // Default in px
+
+  const zoomIn = () => setFontSize(prev => Math.min(prev + 1, 24));
+  const zoomOut = () => setFontSize(prev => Math.max(prev - 1, 9));
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -259,7 +271,6 @@ function TerminalPanel({ lines }) {
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
         padding: '10px 14px',
         borderBottom: '1px solid rgba(255,255,255,0.05)',
         background: 'rgba(0,0,0,0.3)',
@@ -271,15 +282,53 @@ function TerminalPanel({ lines }) {
             <div key={c} style={{ width: 11, height: 11, borderRadius: '50%', background: c, opacity: 0.85 }} />
           ))}
         </div>
-        <TerminalIcon size={13} style={{ color: 'rgba(255,255,255,0.3)', marginLeft: 4 }} />
+        
+        <TerminalIcon size={13} style={{ color: 'rgba(255,255,255,0.3)', marginLeft: 14 }} />
         <span style={{
           fontSize: 11,
           fontFamily: '"PPSupplyMono", monospace',
           color: 'rgba(255,255,255,0.3)',
           letterSpacing: '0.05em',
+          marginLeft: 8
         }}>
-          outrench — agent
+          Spirit — Outrench Agent
         </span>
+
+        {/* Zoom Controls */}
+        <div style={{ 
+          marginLeft: 'auto', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 4,
+          background: 'rgba(255,255,255,0.03)',
+          padding: '2px 6px',
+          borderRadius: 6,
+          border: '1px solid rgba(255,255,255,0.05)'
+        }}>
+          <button 
+            onClick={zoomOut}
+            style={{ 
+              background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', 
+              cursor: 'pointer', padding: 4, display: 'flex' 
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+            onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.4)'}
+          >
+            <ZoomOut size={13} />
+          </button>
+          <div style={{ width: 1, height: 10, background: 'rgba(255,255,255,0.1)' }} />
+          <button 
+            onClick={zoomIn}
+            style={{ 
+              background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', 
+              cursor: 'pointer', padding: 4, display: 'flex' 
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+            onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.4)'}
+          >
+            <ZoomIn size={13} />
+          </button>
+        </div>
       </div>
 
       {/* Terminal output area */}
@@ -288,7 +337,7 @@ function TerminalPanel({ lines }) {
         overflowY: 'auto',
         padding: '14px 16px',
         fontFamily: '"PPSupplyMono", "Courier New", monospace',
-        fontSize: 13,
+        fontSize,
         lineHeight: 1.75,
         color: 'rgba(255,255,255,0.7)',
         scrollbarWidth: 'thin',
@@ -308,7 +357,7 @@ function TerminalPanel({ lines }) {
 
         {/* Log lines — populated by backend */}
         {lines.map(line => (
-          <TerminalLine key={line.id} line={line} />
+          <TerminalLine key={line.id} line={line} fontSize={fontSize} />
         ))}
 
         {/* Blinking cursor */}
@@ -316,7 +365,7 @@ function TerminalPanel({ lines }) {
           <span style={{ color: '#6366f1' }}>$</span>
           <span style={{
             display: 'inline-block',
-            width: 8, height: 15,
+            width: 8, height: fontSize + 2,
             background: 'rgba(99,102,241,0.8)',
             borderRadius: 1,
             animation: 'blink 1.1s step-end infinite',
@@ -343,7 +392,7 @@ const LINE_COLORS = {
   ai_response: '#818cf8',   // muted indigo — AI replies
 };
 
-function TerminalLine({ line }) {
+function TerminalLine({ line, fontSize }) {
   const color = LINE_COLORS[line.type] || LINE_COLORS.info;
   const isAI = line.type === 'ai_response';
   const prefix = {
@@ -360,7 +409,7 @@ function TerminalLine({ line }) {
       display: 'flex',
       gap: 10,
       color,
-      fontSize: 13,
+      fontSize,
       // AI response lines get a subtle left-border highlight
       ...(isAI && {
         background: 'rgba(99,102,241,0.06)',
