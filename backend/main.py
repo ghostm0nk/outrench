@@ -130,6 +130,15 @@ class ChannelCredentialsRequest(BaseModel):
     name: Optional[str] = None
     avatar_url: Optional[str] = None
 
+class MarketLeadRequest(BaseModel):
+    clerk_id: str
+    platform: str
+    handle: str
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    content: Optional[str] = None
+    reason: Optional[str] = None
+
 
 # ── Content Safeguards (server-side) ───────────────────────────────────────────
 PROFANITY_LIST = [
@@ -444,6 +453,69 @@ async def connect_channel(req: ChannelCredentialsRequest):
              error_msg += f" | Body: {e.response.text}"
         print(f"Error saving channel credentials: {error_msg}")
         raise HTTPException(status_code=500, detail=f"Database save failed: {error_msg}")
+
+# ── Market Scout endpoints ─────────────────────────────────────────────────────
+
+@app.get("/api/market/strategy/{clerk_id}")
+async def get_market_strategy(clerk_id: str):
+    if not supabase: raise HTTPException(status_code=500, detail="Database error")
+    
+    # 1. Fetch startup info
+    res = supabase.table("startups").select("*").eq("clerk_id", clerk_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Please complete onboarding first")
+    
+    startup = res.data[0]
+    
+    # 2. Use Agent Logic to generate search terms
+    from agent_logic import get_ai_response
+    prompt = f"""
+    Based on this startup:
+    Name: {startup['name']}
+    Problem: {startup['problem_solved']}
+    Target: {startup['target_audience']}
+    Unique Value: {startup['unique_value']}
+    
+    Identify 5 specific Twitter search queries (keywords or phrases) that would find people currently experiencing the problem this startup solves.
+    Focus on "complaint" keywords or "advice seeking" questions.
+    Return ONLY a JSON list of strings.
+    """
+    
+    response = await get_ai_response(prompt, "You are an expert market researcher.")
+    try:
+        # Simple extraction
+        import json
+        start = response.find('[')
+        end = response.rfind(']') + 1
+        queries = json.loads(response[start:end])
+        return {"queries": queries}
+    except:
+        return {"queries": ["overthinking intros", "dating app fatigue", "first message anxiety"]}
+
+@app.post("/api/market/leads")
+async def save_market_lead(req: MarketLeadRequest):
+    if not supabase: raise HTTPException(status_code=500, detail="Database error")
+    data = req.dict()
+    try:
+        # Check if already exists to avoid spamming
+        existing = supabase.table("market_leads").select("id").eq("clerk_id", req.clerk_id).eq("handle", req.handle).execute()
+        if existing.data:
+            return {"status": "skipped", "message": "Lead already exists"}
+            
+        supabase.table("market_leads").insert(data).execute()
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Error saving lead: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/market/leads/{clerk_id}")
+async def get_market_leads(clerk_id: str):
+    if not supabase: raise HTTPException(status_code=500, detail="Database error")
+    try:
+        res = supabase.table("market_leads").select("*").eq("clerk_id", clerk_id).order("created_at", desc=True).limit(20).execute()
+        return {"leads": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/channels/status/{clerk_id}")
 async def get_channel_status(clerk_id: str):

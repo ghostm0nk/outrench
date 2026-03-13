@@ -1,7 +1,6 @@
 // background.js
 console.log("Ghost Driver: Bridge Online.");
 
-// We'll try to determine the API URL, defaulting to local dev
 const API_URL = "http://localhost:8000"; 
 
 // Set initial badge
@@ -43,7 +42,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
           if (response.ok) {
             const data = await response.json();
-            console.log("Ghost Driver: Sync Successful!");
             broadcastToDashboards({ 
               type: "SYNC_COMPLETE", 
               platform, 
@@ -52,19 +50,80 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
           } else {
             const err = await response.json();
-            console.error("Ghost Driver: Sync Failed at Backend:", err);
             broadcastToDashboards({ type: "SYNC_ERROR", error: err.detail || "Database Rejected the Spirit." });
           }
         } catch (e) {
-          console.error("Ghost Driver: Network Error during sync:", e);
-          broadcastToDashboards({ type: "SYNC_ERROR", error: "Ghost Driver blocked by Network/CORS. Check if Backend is on port 8000." });
+          console.error("Ghost Sync Error:", e);
+          broadcastToDashboards({ type: "SYNC_ERROR", error: "Ghost Driver blocked by Network/CORS." });
         }
       } else {
-        broadcastToDashboards({ type: "SESSION_NOT_FOUND", error: "Ghost Driver has no Twitter data yet. Please open a Twitter tab." });
+        broadcastToDashboards({ type: "SESSION_NOT_FOUND", error: "Ghost Driver has no Twitter data yet." });
       }
     });
   }
+
+  // 3. Initiate Market Scout
+  if (request.type === "START_MARKET_SCOUT") {
+    const { clerk_id } = request;
+    console.log("Ghost Driver: Starting Market Scout for", clerk_id);
+    
+    initiateScout(clerk_id);
+  }
+
+  // 4. Receving scraped leads from content script
+  if (request.type === "LEADS_SCRAPED") {
+    saveLeadsToBackend(request.clerk_id, request.leads);
+  }
 });
+
+async function initiateScout(clerk_id) {
+  try {
+    // Get strategy from backend
+    const resp = await fetch(`${API_URL}/api/market/strategy/${clerk_id}`);
+    const { queries } = await resp.json();
+    
+    if (!queries || queries.length === 0) return;
+
+    // Pick a random query to start with
+    const query = queries[Math.floor(Math.random() * queries.length)];
+    const searchUrl = `https://twitter.com/search?q=${encodeURIComponent(query)}&f=live`;
+
+    // Find if we already have a twitter tab, otherwise open new
+    chrome.tabs.query({ url: "*://*.twitter.com/*" }, (tabs) => {
+      if (tabs.length > 0) {
+        chrome.tabs.update(tabs[0].id, { url: searchUrl, active: true });
+        // Content script will pick it up
+      } else {
+        chrome.tabs.create({ url: searchUrl, active: true });
+      }
+    });
+  } catch (e) {
+    console.error("Failed to start scout:", e);
+  }
+}
+
+async function saveLeadsToBackend(clerk_id, leads) {
+  for (const lead of leads) {
+    try {
+      await fetch(`${API_URL}/api/market/leads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clerk_id,
+          platform: 'twitter',
+          handle: lead.handle,
+          name: lead.name,
+          avatar_url: lead.avatar_url,
+          content: lead.content,
+          reason: lead.reason
+        })
+      });
+    } catch (e) {
+      console.error("Failed to save lead:", lead.handle, e);
+    }
+  }
+  broadcastToDashboards({ type: "SCOUT_STATUS", status: "finished", found: leads.length });
+}
 
 function broadcastToDashboards(msg) {
   chrome.tabs.query({}, (tabs) => {
