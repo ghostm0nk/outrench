@@ -13,6 +13,9 @@
   "background": {
     "service_worker": "background.js"
   },
+  "action": {
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": ["https://twitter.com/*", "https://x.com/*", "http://localhost:5173/*", "https://outrench.vercel.app/*"],

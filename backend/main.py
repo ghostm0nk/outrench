@@ -437,8 +437,11 @@ async def connect_channel(req: ChannelCredentialsRequest):
         supabase.table("channel_credentials").upsert(data, on_conflict="clerk_id,platform,account_type").execute()
         return {"status": "success", "profile": {"handle": handle, "name": name, "avatar_url": avatar_url}}
     except Exception as e:
-        print(f"Error saving channel credentials: {e}")
-        raise HTTPException(status_code=500, detail="Database save failed")
+        error_msg = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+             error_msg += f" | Body: {e.response.text}"
+        print(f"Error saving channel credentials: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Database save failed: {error_msg}")
 
 @app.get("/api/channels/status/{clerk_id}")
 async def get_channel_status(clerk_id: str):

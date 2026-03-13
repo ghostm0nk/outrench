@@ -1,11 +1,19 @@
 // background.js
 console.log("Ghost Driver: Bridge Online.");
 
+// Set initial badge
+chrome.action.setBadgeText({ text: "SYNC" });
+chrome.action.setBadgeBackgroundColor({ color: "#f59e0b" });
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // 1. Twitter Scraper pushing data
   if (request.type === "TWITTER_PROFILE_FETCHED") {
     console.log("Stashing Twitter session for:", request.data.handle);
     chrome.storage.local.set({ twitter_profile: request.data }, () => {
+      // Update badge to OK
+      chrome.action.setBadgeText({ text: "OK" });
+      chrome.action.setBadgeBackgroundColor({ color: "#10b981" });
+      
       // Notify any open dashboard tabs that data is fresh
       broadcastToDashboards({ type: "PROFILE_DATA_READY", data: request.data });
     });

@@ -98,12 +98,15 @@ export default function Channels() {
           avatar_url: profileData.avatar_url
         })
       });
-      if (!resp.ok) throw new Error("Failed to sync profile");
+      if (!resp.ok) {
+        const errorData = await resp.json();
+        throw new Error(errorData.detail || "Failed to sync profile");
+      }
       const data = await resp.json();
       setConnections(prev => ({ ...prev, [connectionKey]: data.profile || true }));
     } catch (err) {
       console.error(err);
-      setError("Failed to sync from Ghost Driver.");
+      setError(err.message || "Failed to sync from Ghost Driver.");
     } finally {
       setIsSyncing(false);
     }
