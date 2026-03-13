@@ -38,6 +38,7 @@ if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
 else:
     print("Warning: Supabase credentials missing from environment")
 
+
 if not CLERK_WEBHOOK_SECRET:
     print("Warning: CLERK_WEBHOOK_SECRET is missing from environment")
 
@@ -47,6 +48,82 @@ class OutreachRequest(BaseModel):
     target_platform: str = "reddit"
     bio: str = ""
     latest_post: str = ""
+
+
+class OnboardingRequest(BaseModel):
+    clerk_id: str
+    name: str
+    one_liner: str = ""
+    website_url: str = ""
+    category: str = ""
+    target_audience: str = ""
+    problem_solved: str = ""
+    unique_value: str = ""
+    tone: str = "casual"
+
+
+# ── Content Safeguards (server-side) ───────────────────────────────────────────
+PROFANITY_LIST = [
+    'fuck','shit','ass','bitch','damn','dick','cock','cunt','bastard','slut',
+    'whore','fag','nigger','nigga','retard','piss','wank','twat','bollocks',
+    'motherfuck','bullshit','asshole','dumbass','jackass','goddamn',
+    'fucking','fucker','bitches','cunts','sluts','faggot',
+    'rape','rapist','kill','murder','porn','xxx','hentai','onlyfans',
+    'escort','prostitut','trafficking','molest','pedophil',
+    'cocaine','heroin','meth','fentanyl',
+]
+
+BANNED_KEYWORDS = [
+    'gambling','casino','betting','poker','slot machine',
+    'adult','pornography','escort service','sex work','onlyfans',
+    'weapon','firearm','gun shop','ammunition','explosive',
+    'drug','narcotic','dispensary',
+    'pyramid scheme','mlm','multi-level','ponzi',
+    'hate group','supremacist','extremis','terroris',
+    'counterfeit','fraud','scam','phishing','money launder',
+    'dark web','darknet','black market',
+    'crypto pump','rug pull',
+]
+
+ALLOWED_CATEGORIES = [
+    'SaaS','E-Commerce','Fintech','Health & Wellness','Education',
+    'Developer Tools','Marketing','AI / ML','Social / Community','Other',
+]
+
+def check_profanity(text: str) -> bool:
+    if not text:
+        return False
+    lower = ''.join(c if c.isalpha() or c.isspace() else '' for c in text.lower())
+    words = lower.split()
+    return any(p in words or any(p in w for w in words) for p in PROFANITY_LIST)
+
+def check_banned_content(text: str) -> str | None:
+    if not text:
+        return None
+    lower = text.lower()
+    for keyword in BANNED_KEYWORDS:
+        if keyword in lower:
+            return keyword
+    return None
+
+def validate_onboarding(req: OnboardingRequest) -> str | None:
+    """Returns an error message if validation fails, None if all good."""
+    fields_to_check = [req.name, req.one_liner, req.target_audience, req.problem_solved, req.unique_value]
+    
+    for field in fields_to_check:
+        if check_profanity(field):
+            return "Inappropriate language detected. Please keep it professional."
+        banned = check_banned_content(field)
+        if banned:
+            return f'Outrench cannot be used for "{banned}"-related businesses.'
+    
+    if req.category and req.category not in ALLOWED_CATEGORIES:
+        return f"Invalid category: {req.category}"
+    
+    if req.name and len(req.name.strip()) < 2:
+        return "Startup name must be at least 2 characters."
+    
+    return None
 
 
 @app.get("/")
@@ -189,3 +266,63 @@ async def clerk_webhook(request: Request):
         return {"status": "user_deleted"}
 
     return {"status": "ignored", "event": event_type}
+
+
+# ── Onboarding (saves startup profile) ─────────────────────────────────────────
+@app.post("/api/onboarding")
+async def save_onboarding(req: OnboardingRequest):
+    """Save the user's startup profile and mark them as onboarded."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    # ── Validate content before saving ──
+    rejection_reason = validate_onboarding(req)
+    if rejection_reason:
+        print(f"Onboarding REJECTED for {req.clerk_id}: {rejection_reason}")
+        return {"status": "rejected", "reason": rejection_reason}
+
+    try:
+        # Find the user by clerk_id
+        user_result = supabase.table("users").select("id").eq("clerk_id", req.clerk_id).execute()
+        user_id = user_result.data[0]["id"] if user_result.data else None
+
+        # Upsert startup data
+        startup_data = {
+            "clerk_id": req.clerk_id,
+            "user_id": user_id,
+            "name": req.name,
+            "one_liner": req.one_liner,
+            "website_url": req.website_url,
+            "category": req.category,
+            "target_audience": req.target_audience,
+            "problem_solved": req.problem_solved,
+            "unique_value": req.unique_value,
+            "tone": req.tone,
+        }
+        supabase.table("startups").upsert(startup_data, on_conflict="clerk_id").execute()
+
+        # Mark user as onboarded
+        supabase.table("users").update({"onboarded": True}).eq("clerk_id", req.clerk_id).execute()
+
+        print(f"Onboarding complete for: {req.name} ({req.clerk_id})")
+        return {"status": "success", "startup_name": req.name}
+
+    except Exception as e:
+        print(f"Onboarding error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/onboarding/status/{clerk_id}")
+async def check_onboarding(clerk_id: str):
+    """Check if a user has completed onboarding."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    try:
+        result = supabase.table("users").select("onboarded").eq("clerk_id", clerk_id).execute()
+        if result.data:
+            return {"onboarded": result.data[0].get("onboarded", False)}
+        return {"onboarded": False}
+    except Exception as e:
+        print(f"Check onboarding error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

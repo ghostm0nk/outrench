@@ -1,8 +1,10 @@
-import { useState, lazy, Suspense } from 'react';
-import { SignedIn, SignedOut, useSignIn, useSignUp } from '@clerk/clerk-react';
+import { useState, useEffect, lazy, Suspense } from 'react';
+import { SignedIn, SignedOut, useSignIn, useSignUp, useUser } from '@clerk/clerk-react';
 import { Loader2, Sparkles, X, Mail, Lock, Eye, EyeOff, User, Send } from 'lucide-react';
+import axios from 'axios';
 import outrenchLogo from './assets/outrench.png';
 import Dashboard from './components/Dashboard';
+import Onboarding from './components/Onboarding';
 
 // Lazy-load the heavy Three.js component so it doesn't block the dashboard
 const SpectralGhost = lazy(() => import('./components/SpectralGhost'));
@@ -427,12 +429,55 @@ function App() {
         <AuthSheet isOpen={authOpen} onClose={() => setAuthOpen(false)} />
       </SignedOut>
 
-      {/* ── DASHBOARD (signed in) ─────────────────────────────────── */}
+      {/* ── SIGNED IN (onboarding or dashboard) ───────────────────── */}
       <SignedIn>
-        <Dashboard />
+        <SignedInRouter />
       </SignedIn>
     </>
   );
 }
 
+// ── Signed-In Router: checks onboarding status ──────────────────────────────
+function SignedInRouter() {
+  const { user } = useUser();
+  const [onboarded, setOnboarded] = useState(null); // null = loading, true/false = result
+
+  useEffect(() => {
+    if (!user) return;
+    const checkOnboarding = async () => {
+      try {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const res = await axios.get(`${apiUrl}/api/onboarding/status/${user.id}`);
+        setOnboarded(res.data.onboarded);
+      } catch (err) {
+        console.error('Failed to check onboarding status:', err);
+        setOnboarded(false); // Default to onboarding if check fails
+      }
+    };
+    checkOnboarding();
+  }, [user]);
+
+  // Loading state
+  if (onboarded === null) {
+    return (
+      <div style={{
+        minHeight: '100vh', background: '#0a0a0a',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Loader2 size={32} style={{ color: '#6366f1', animation: 'spin 1s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  // Not onboarded → show questionnaire
+  if (!onboarded) {
+    return <Onboarding onComplete={() => setOnboarded(true)} />;
+  }
+
+  // Onboarded → show dashboard
+  return <Dashboard />;
+}
+
 export default App;
+
