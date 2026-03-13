@@ -1,4 +1,5 @@
 import json
+from typing import List, Dict, Optional
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
@@ -405,8 +406,9 @@ async def connect_channel(req: ChannelCredentialsRequest):
     name = None
     avatar_url = None
 
-    if req.platform == "twitter":
-        if req.auth_token == "GHOST_DRIVER_SESSION":
+    if req.platform.lower() == "twitter":
+        print(f"DEBUG: Connecting Twitter for {req.clerk_id} with token: '{req.auth_token}'")
+        if req.auth_token.strip().upper() == "GHOST_DRIVER_SESSION":
             # Direct sync from Ghost Driver, use provided fields
             handle = req.handle
             name = req.name
