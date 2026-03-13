@@ -4,7 +4,7 @@ import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
-import httpx
+import requests
 from dotenv import load_dotenv
 from svix.webhooks import Webhook, WebhookVerificationError
 
@@ -43,7 +43,7 @@ class SupabaseRestWrapper:
             def insert(self, data):
                 class Req:
                     def execute(self):
-                        with httpx.Client() as c:
+                        with requests.Session() as c:
                             return c.post(url, headers=headers, json=data).raise_for_status()
                 return Req()
             def update(self, data):
@@ -52,7 +52,7 @@ class SupabaseRestWrapper:
                         self.k, self.v = k, v
                         return self
                     def execute(self):
-                        with httpx.Client() as c:
+                        with requests.Session() as c:
                             return c.patch(f"{url}?{self.k}=eq.{self.v}", headers=headers, json=data).raise_for_status()
                 return Req()
             def delete(self):
@@ -61,7 +61,7 @@ class SupabaseRestWrapper:
                         self.k, self.v = k, v
                         return self
                     def execute(self):
-                        with httpx.Client() as c:
+                        with requests.Session() as c:
                             return c.delete(f"{url}?{self.k}=eq.{self.v}", headers=headers).raise_for_status()
                 return Req()
             def upsert(self, data, on_conflict="id"):
@@ -69,7 +69,7 @@ class SupabaseRestWrapper:
                     def execute(self):
                         h = headers.copy()
                         h["Prefer"] = "resolution=merge-duplicates"
-                        with httpx.Client() as c:
+                        with requests.Session() as c:
                             return c.post(f"{url}?on_conflict={on_conflict}", headers=h, json=data).raise_for_status()
                 return Req()
             def select(self, fields="*"):
@@ -78,7 +78,7 @@ class SupabaseRestWrapper:
                         self.k, self.v = k, v
                         return self
                     def execute(self):
-                        with httpx.Client() as c:
+                        with requests.Session() as c:
                             r = c.get(f"{url}?select={fields}&{self.k}=eq.{self.v}", headers=headers)
                             r.raise_for_status()
                             class Res:
@@ -188,7 +188,7 @@ def health_check():
 
 
 @app.post("/api/generate")
-async def generate_outreach(req: OutreachRequest):
+def generate_outreach(req: OutreachRequest):
     if not GROQ_API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY is missing")
 
@@ -206,33 +206,32 @@ Write a 2-3 sentence outreach message responding to their context (or just reach
 """
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": "You are a casual and friendly outreach expert. Output ONLY the message itself, without quotes or extra conversational text."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": 150
-                },
-                timeout=10.0
-            )
-            response.raise_for_status()
-            data = response.json()
-            generated_message = data["choices"][0]["message"]["content"].strip()
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": GROQ_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You are a casual and friendly outreach expert. Output ONLY the message itself, without quotes or extra conversational text."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 150
+            },
+            timeout=10.0
+        )
+        response.raise_for_status()
+        data = response.json()
+        generated_message = data["choices"][0]["message"]["content"].strip()
 
-            return {
-                "username": req.username,
-                "platform": req.target_platform,
-                "message": generated_message
-            }
+        return {
+            "username": req.username,
+            "platform": req.target_platform,
+            "message": generated_message
+        }
 
     except Exception as e:
         print(f"Error calling Groq API: {e}")
