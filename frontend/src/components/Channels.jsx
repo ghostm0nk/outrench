@@ -29,6 +29,9 @@ const ACCOUNTS = [
 // ── Channels Main Component ──────────────────────────────────────────────────
 export default function Channels() {
   const { user } = useUser();
+  const [activePlatform, setActivePlatform] = useState('twitter');
+  const [activeAccount, setActiveAccount] = useState('personal');
+  const [isAuto, setIsAuto] = useState(false);
   const [connections, setConnections] = useState({}); // e.g. { 'twitter_personal': true }
   const [tokens, setTokens] = useState({}); // e.g. { 'twitter_personal': 'token_value' }
   const [error, setError] = useState('');
