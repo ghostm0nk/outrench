@@ -1,16 +1,16 @@
 // background.js
 console.log("Ghost Driver: Bridge Online.");
 
-const API_URL = "http://localhost:8000"; // Should ideally be dynamic, but hardcoded for local dev
+// We'll try to determine the API URL, defaulting to local dev
+const API_URL = "http://localhost:8000"; 
 
 // Set initial badge
 chrome.action.setBadgeText({ text: "SYNC" });
 chrome.action.setBadgeBackgroundColor({ color: "#f59e0b" });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // 1. Twitter Scraper pushing data
+  // 1. Twitter Scraper pushing data to storage
   if (request.type === "TWITTER_PROFILE_FETCHED") {
-    console.log("Stashing Twitter session for:", request.data.handle);
     chrome.storage.local.set({ twitter_profile: request.data }, () => {
       chrome.action.setBadgeText({ text: "OK" });
       chrome.action.setBadgeBackgroundColor({ color: "#10b981" });
@@ -18,14 +18,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
   }
 
-  // 2. Dashboard requesting a direct sync
+  // 2. Dashboard requesting a direct database sync
   if (request.type === "SYNC_ACTION_REQUEST") {
     const { clerk_id, platform, account_type } = request;
     
     chrome.storage.local.get(['twitter_profile'], async (result) => {
       if (result.twitter_profile) {
         try {
-          console.log("Ghost Driver: Initiating Direct Sync for", clerk_id);
+          console.log(`Ghost Driver: Syncing @${result.twitter_profile.handle} for Clerk User ${clerk_id}`);
+          
           const response = await fetch(`${API_URL}/api/channels/connect`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -42,17 +43,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
           if (response.ok) {
             const data = await response.json();
-            broadcastToDashboards({ type: "SYNC_COMPLETE", success: true, profile: data.profile });
+            console.log("Ghost Driver: Sync Successful!");
+            broadcastToDashboards({ 
+              type: "SYNC_COMPLETE", 
+              platform, 
+              account_type, 
+              profile: data.profile 
+            });
           } else {
             const err = await response.json();
-            broadcastToDashboards({ type: "SYNC_ERROR", error: err.detail || "Database Sync Failed" });
+            console.error("Ghost Driver: Sync Failed at Backend:", err);
+            broadcastToDashboards({ type: "SYNC_ERROR", error: err.detail || "Database Rejected the Spirit." });
           }
         } catch (e) {
-          console.error("Ghost Sync Error:", e);
-          broadcastToDashboards({ type: "SYNC_ERROR", error: "Ghost Driver could not reach the backend." });
+          console.error("Ghost Driver: Network Error during sync:", e);
+          broadcastToDashboards({ type: "SYNC_ERROR", error: "Ghost Driver blocked by Network/CORS. Check if Backend is on port 8000." });
         }
       } else {
-        broadcastToDashboards({ type: "SESSION_NOT_FOUND", error: "Please open a Twitter tab first to initialize the Ghost Driver." });
+        broadcastToDashboards({ type: "SESSION_NOT_FOUND", error: "Ghost Driver has no Twitter data yet. Please open a Twitter tab." });
       }
     });
   }

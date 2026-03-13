@@ -52,7 +52,8 @@ export default function Channels() {
 
     const handleMessage = (event) => {
       if (event.data.type === "SYNC_COMPLETE") {
-        setConnections(prev => ({ ...prev, [connectionKey]: event.data.profile || true }));
+        const key = `${event.data.platform}_${event.data.account_type}`;
+        setConnections(prev => ({ ...prev, [key]: event.data.profile || true }));
         setIsSyncing(false);
       }
       if (event.data.type === "SYNC_ERROR") {
