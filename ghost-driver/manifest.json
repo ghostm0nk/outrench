@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Outrench Ghost Driver",
+  "version": "1.0",
+  "description": "The physical hands of Spirit AI. Bridges your browser to the Outrench Dashboard.",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://twitter.com/*",
+    "https://x.com/*",
+    "http://localhost:5173/*",
+    "https://outrench.vercel.app/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://twitter.com/*", "https://x.com/*"],
+      "js": ["content.js"]
+    }
+  ]
+}

@@ -36,8 +36,31 @@ export default function Channels() {
   const [tokens, setTokens] = useState({}); // e.g. { 'twitter_personal': 'token_value' }
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isDriverActive, setIsDriverActive] = useState(false);
 
-  // Fetch true connection status on mount
+  // Check for Extension presence & Listen for data
+  useEffect(() => {
+    const checkDriver = () => {
+      if (window.__GHOST_DRIVER__) setIsDriverActive(true);
+    };
+    const timer = setInterval(checkDriver, 1000);
+
+    const handleMessage = (event) => {
+      if (event.data.type === "PROFILE_DATA_READY") {
+        const profile = event.data.data;
+        // Automatically trigger backend sync with this data
+        syncToBackend(profile);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [user, activePlatform, activeAccount]);
+
   useEffect(() => {
     if (!user) return;
     
@@ -51,30 +74,8 @@ export default function Channels() {
       .finally(() => setIsLoading(false));
   }, [user]);
 
-  const connectionKey = `${activePlatform}_${activeAccount}`;
-  const isConnected = !!connections[connectionKey];
-  const authToken = tokens[connectionKey] || '';
-
-  const handleConnect = async () => {
-    setError('');
-    const token = authToken.trim();
-    
-    // Front-end validation for Twitter auth_token
-    if (activePlatform === 'twitter') {
-      const isHex = /^[0-9a-fA-F]+$/.test(token);
-      if (token.length !== 40 || !isHex) {
-        setError('Invalid auth_token. A valid Twitter auth_token is exactly 40 hex characters.');
-        return; // Halt connection
-      }
-    } else {
-      // Basic check for TikTok (can be updated later)
-      if (token.length < 10) {
-        setError('Invalid session token.');
-        return;
-      }
-    }
-
-    // If valid, connect via API
+  const syncToBackend = async (profileData) => {
+    if (!user) return;
     try {
       const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/channels/connect`, {
         method: 'POST',
@@ -83,18 +84,29 @@ export default function Channels() {
           clerk_id: user.id,
           platform: activePlatform,
           account_type: activeAccount,
-          auth_token: token,
+          auth_token: "GHOST_DRIVER_SESSION",
+          handle: profileData.handle,
+          name: profileData.name,
+          avatar_url: profileData.avatar_url
         })
       });
-      if (!resp.ok) throw new Error("Failed to connect");
-      
+      if (!resp.ok) throw new Error("Failed to sync profile");
       const data = await resp.json();
-      
       setConnections(prev => ({ ...prev, [connectionKey]: data.profile || true }));
     } catch (err) {
-      setError("Failed to save credentials to backend.");
       console.error(err);
+      setError("Failed to sync from Ghost Driver.");
     }
+  };
+
+  const connectionKey = `${activePlatform}_${activeAccount}`;
+  const isConnected = !!connections[connectionKey];
+  const authToken = tokens[connectionKey] || '';
+
+  const handleConnect = () => {
+    setError('');
+    // Dispatch request to extension
+    window.postMessage({ type: "SYNC_PROFILE_REQUEST" }, "*");
   };
 
   const handleDisconnect = async () => {
@@ -291,7 +303,7 @@ export default function Channels() {
         gap: 20,
       }}>
         {!isConnected ? (
-          // ── CONNECTION / API SETUP VIEW ──
+          // ── CONNECTION / GHOST DRIVER SETUP VIEW ──
           <div style={{
             flex: 1,
             display: 'flex',
@@ -303,74 +315,91 @@ export default function Channels() {
               background: 'rgba(20,15,10,0.8)',
               border: '1px solid rgba(245,158,11,0.2)',
               borderRadius: 24,
-              padding: 32,
+              padding: 40,
               display: 'flex',
               flexDirection: 'column',
+              alignItems: 'center',
+              textAlign: 'center',
               boxShadow: '0 16px 40px rgba(0,0,0,0.5)',
             }}>
-              <div style={{ width: 48, height: 48, borderRadius: 12, background: 'rgba(245,158,11,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
-                {activePlatform === 'twitter' ? <Twitter size={24} color="#1DA1F2" /> : <Video size={24} color="#ff0050" />}
+              <div style={{ 
+                width: 64, height: 64, 
+                borderRadius: '50%', 
+                background: 'rgba(245,158,11,0.1)', 
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                marginBottom: 24,
+                border: '1px solid rgba(245,158,11,0.2)',
+                position: 'relative'
+              }}>
+                <Zap size={32} style={{ color: '#f59e0b' }} />
+                {isDriverActive && (
+                  <div style={{ 
+                    position: 'absolute', top: -2, right: -2, 
+                    width: 14, height: 14, 
+                    borderRadius: '50%', 
+                    background: '#10b981', 
+                    border: '3px solid #14100c' 
+                  }} />
+                )}
               </div>
-              
-              <h2 style={{ margin: '0 0 8px 0', fontSize: 20, fontWeight: 600 }}>Link {activeAccount === 'personal' ? 'Personal' : 'Product'} {activePlatform === 'twitter' ? 'Twitter' : 'TikTok'} Account</h2>
-              <p style={{ margin: '0 0 24px 0', fontSize: 13, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
-                Spirit needs access to this platform to scrape leads, monitor growth, and post content on your behalf.
+
+              <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 12px 0', color: '#fff' }}>
+                {isDriverActive ? 'Ghost Driver Active' : 'Ghost Driver Missing'}
+              </h2>
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', maxWidth: 400, margin: '0 0 32px 0', lineHeight: 1.6 }}>
+                {isDriverActive 
+                  ? "Your Ghost Driver is connected. Spirit can now securely use your browser to manage your growth strategy."
+                  : "To bypass Twitter limits and $100/mo costs, we use the Ghost Driver. It acts as Spirit's physical hands on the web."}
               </p>
 
-              {activePlatform === 'twitter' && (
-                <div style={{ background: 'rgba(255,255,255,0.03)', padding: 16, borderRadius: 12, border: '1px solid rgba(255,255,255,0.05)', marginBottom: 24 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: '#fbbf24' }}>How to find your Twitter Auth Token (Free):</div>
-                  <ol style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
-                    <li>Open Twitter (x.com) in your browser and log in.</li>
-                    <li>Right-click anywhere and select <strong>Inspect</strong> (or press F12).</li>
-                    <li>Go to the <strong>Application</strong> tab (or "Storage" &gt; "Cookies" in Firefox).</li>
-                    <li>Under <strong>Cookies</strong> on the left sidebar, select <code>https://x.com</code>.</li>
-                    <li>Find the cookie named <strong>auth_token</strong> and copy its value below.</li>
-                  </ol>
-                </div>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'rgba(255,255,255,0.4)', marginBottom: 8 }}>
-                    Auth Token Cookie
-                  </label>
-                  <input 
-                    type="password"
-                    value={authToken}
-                    onChange={(e) => setTokens(prev => ({ ...prev, [connectionKey]: e.target.value }))}
-                    placeholder="Enter auth_token value"
-                    style={{
-                      width: '100%', boxSizing: 'border-box',
-                      background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', outline: 'none',
-                      color: '#fff', fontSize: 14, padding: '12px 16px', borderRadius: 10,
+              {!isDriverActive ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
+                  <button 
+                    onClick={() => window.open('https://github.com/ghostm0nk/outrench-extension', '_blank')}
+                    style={{ 
+                      background: 'rgba(255,255,255,0.05)', 
+                      border: '1px solid rgba(255,255,255,0.1)', 
+                      color: '#fff', 
+                      padding: '12px 24px', 
+                      borderRadius: 12, 
+                      fontWeight: 600, 
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      transition: 'all 0.2s',
                     }}
-                  />
+                    onMouseOver={(e) => e.target.style.background = 'rgba(255,255,255,0.08)'}
+                    onMouseOut={(e) => e.target.style.background = 'rgba(255,255,255,0.05)'}
+                  >
+                    Step 1: Get Ghost Driver Folder
+                  </button>
+                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', margin: 0 }}>
+                    Then visit <span style={{ color: '#f59e0b' }}>chrome://extensions</span> and drag the folder in.
+                  </p>
                 </div>
-
-                {error && (
-                  <div style={{ color: '#ef4444', fontSize: 12, padding: '8px 12px', background: 'rgba(239, 68, 68, 0.1)', borderRadius: 8, border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-                    {error}
-                  </div>
-                )}
-
+              ) : (
                 <button 
                   onClick={handleConnect}
-                  disabled={!authToken}
-                  style={{
-                    marginTop: 8,
-                    background: authToken ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 'rgba(255,255,255,0.05)',
-                    color: authToken ? '#fff' : 'rgba(255,255,255,0.2)',
-                    border: 'none', padding: '14px', borderRadius: 10, fontSize: 14, fontWeight: 600,
-                    cursor: authToken ? 'pointer' : 'not-allowed',
-                    transition: 'all 0.2s',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    boxShadow: authToken ? '0 4px 15px rgba(245,158,11,0.3)' : 'none'
+                  style={{ 
+                    width: '100%',
+                    background: 'linear-gradient(135deg, #f59e0b, #ea580c)', 
+                    border: 'none', 
+                    color: '#fff', 
+                    padding: '14px 32px', 
+                    borderRadius: 12, 
+                    fontWeight: 700, 
+                    cursor: 'pointer',
+                    fontSize: 16,
+                    boxShadow: '0 4px 20px rgba(245,158,11,0.3)',
+                    transition: 'all 0.2s'
                   }}
+                  onMouseOver={(e) => e.target.style.transform = 'scale(1.02)'}
+                  onMouseOut={(e) => e.target.style.transform = 'scale(1)'}
                 >
-                  <Zap size={16} /> Connect & Awaken Spirit
+                  Awaken & Sync Spirit
                 </button>
-              </div>
+              )}
+
+              {error && <div style={{ marginTop: 20, color: '#ef4444', fontSize: 13, background: 'rgba(239, 68, 68, 0.1)', padding: '8px 16px', borderRadius: 8 }}>{error}</div>}
             </div>
           </div>
         ) : (
