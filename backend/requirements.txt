@@ -4,6 +4,7 @@ groq
 python-dotenv
 pydantic
 requests
-supabase
+supabase==2.3.0
 svix
 httpx
+websockets

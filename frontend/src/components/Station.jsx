@@ -1,0 +1,592 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  CheckCircle2, AlertTriangle, XCircle,
+  ChevronDown, ChevronUp, Send, ListTodo,
+  Terminal as TerminalIcon,
+} from 'lucide-react';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Station — Main Dashboard View
+// Layout:
+//   [Notification Bar]
+//   [Terminal  |  Task Panel]
+//   [Message Input]
+// ─────────────────────────────────────────────────────────────────────────────
+export default function Station() {
+  const [input, setInput] = useState('');
+
+  // Terminal lines — will be populated by backend WebSocket / polling.
+  // Shape: [{ id, timestamp, type: 'info'|'success'|'error'|'warn'|'cmd'|'ai_response', text }]
+  // For now the user's own commands echo locally as 'cmd' lines.
+  const [lines, setLines] = useState([]);
+
+  const pushLine = useCallback((type, text) => {
+    setLines(prev => [
+      ...prev,
+      { id: Date.now() + Math.random(), timestamp: Date.now(), type, text },
+    ]);
+  }, []);
+
+  // System notification state
+  // status: 'ok' | 'warn' | 'error'
+  const [sysStatus, setSysStatus] = useState('warn');
+  const [sysMessage, setSysMessage] = useState('Socket connecting...');
+  const [sysExpanded, setSysExpanded] = useState(false);
+  const [sysDetail, setSysDetail] = useState('');
+
+  const socketRef = useRef(null);
+
+  useEffect(() => {
+    // Determine API URL
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const wsUrl = apiUrl.replace('http', 'ws') + '/api/agent/stream';
+
+    const socket = new WebSocket(wsUrl);
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      setSysStatus('ok');
+      setSysMessage('Agent Online');
+      pushLine('info', 'WebSocket connected. Agent ready.');
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type && data.text) {
+          pushLine(data.type, data.text);
+        }
+      } catch (err) {
+        console.error('Failed to parse socket message', err);
+      }
+    };
+
+    socket.onerror = (error) => {
+      setSysStatus('error');
+      setSysMessage('Connection Error');
+      setSysDetail('Failed to connect to agent backend.');
+    };
+
+    socket.onclose = () => {
+      setSysStatus('warn');
+      setSysMessage('Agent Disconnected');
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, [pushLine]);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const cmd = input.trim();
+    if (!cmd) return;
+    
+    // Echo the command into the terminal immediately
+    pushLine('cmd', cmd);
+    
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(cmd);
+    } else {
+      pushLine('error', 'Agent disconnected. Cannot send command.');
+    }
+    
+    setInput('');
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      gap: 0,
+    }}>
+      {/* ── System Notification Bar ── */}
+      <NotificationBar
+        status={sysStatus}
+        message={sysMessage}
+        detail={sysDetail}
+        expanded={sysExpanded}
+        onToggle={() => setSysExpanded(v => !v)}
+      />
+
+      {/* ── Panels ── */}
+      <div style={{
+        display: 'flex',
+        flex: 1,
+        gap: 12,
+        padding: '12px 16px 0',
+        overflow: 'hidden',
+        minHeight: 0,
+      }}>
+        {/* Left: Terminal */}
+        <TerminalPanel lines={lines} />
+
+        {/* Right: Task Panel */}
+        <TaskPanel />
+      </div>
+
+      {/* ── Command Input ── */}
+      <CommandInput
+        value={input}
+        onChange={setInput}
+        onSubmit={handleSubmit}
+      />
+
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notification Bar
+// ─────────────────────────────────────────────────────────────────────────────
+const STATUS_CONFIG = {
+  ok:    { color: '#10b981', bg: 'rgba(16,185,129,0.06)',  Icon: CheckCircle2,  label: 'Operational' },
+  warn:  { color: '#f59e0b', bg: 'rgba(245,158,11,0.07)',  Icon: AlertTriangle,  label: 'Warning' },
+  error: { color: '#ef4444', bg: 'rgba(239,68,68,0.08)',   Icon: XCircle,        label: 'Error' },
+};
+
+function NotificationBar({ status, message, detail, expanded, onToggle }) {
+  const { color, bg, Icon, label } = STATUS_CONFIG[status] || STATUS_CONFIG.ok;
+  const hasDetail = !!detail;
+
+  return (
+    <div style={{
+      background: bg,
+      borderBottom: `1px solid ${color}22`,
+      transition: 'all 0.3s ease',
+      overflow: 'hidden',
+      flexShrink: 0,
+    }}>
+      {/* Collapsed row */}
+      <div
+        onClick={hasDetail ? onToggle : undefined}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '7px 16px',
+          cursor: hasDetail ? 'pointer' : 'default',
+          userSelect: 'none',
+        }}
+      >
+        {/* Status dot */}
+        <span style={{
+          width: 7, height: 7, borderRadius: '50%',
+          background: color,
+          boxShadow: `0 0 6px ${color}`,
+          flexShrink: 0,
+          animation: status === 'ok' ? 'none' : 'pulse 1.5s ease-in-out infinite',
+        }} />
+
+        <Icon size={13} style={{ color, flexShrink: 0 }} strokeWidth={2} />
+
+        <span style={{
+          fontSize: 11,
+          fontFamily: '"PPSupplyMono", "Courier New", monospace',
+          color,
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+          fontWeight: 600,
+          flexShrink: 0,
+        }}>
+          {label}
+        </span>
+
+        <span style={{
+          fontSize: 12,
+          color: 'rgba(255,255,255,0.45)',
+          fontFamily: 'system-ui',
+        }}>
+          {message}
+        </span>
+
+        {hasDetail && (
+          <span style={{ marginLeft: 'auto', color: 'rgba(255,255,255,0.25)' }}>
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </span>
+        )}
+      </div>
+
+      {/* Expanded detail */}
+      {hasDetail && expanded && (
+        <div style={{
+          padding: '8px 16px 12px 36px',
+          fontFamily: '"PPSupplyMono", monospace',
+          fontSize: 12,
+          color: 'rgba(255,255,255,0.5)',
+          lineHeight: 1.7,
+          borderTop: `1px solid ${color}18`,
+          whiteSpace: 'pre-wrap',
+        }}>
+          {detail}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Terminal Panel (left)
+// ─────────────────────────────────────────────────────────────────────────────
+function TerminalPanel({ lines }) {
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [lines.length]);
+
+  return (
+    <div style={{
+      flex: '1 1 65%',
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#0d0d10',
+      border: '1px solid rgba(255,255,255,0.06)',
+      borderRadius: 14,
+      overflow: 'hidden',
+      minWidth: 0,
+      minHeight: 0,
+    }}>
+      {/* Title bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '10px 14px',
+        borderBottom: '1px solid rgba(255,255,255,0.05)',
+        background: 'rgba(0,0,0,0.3)',
+        flexShrink: 0,
+      }}>
+        {/* macOS-style traffic lights */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {['#ff5f57','#febc2e','#28c840'].map(c => (
+            <div key={c} style={{ width: 11, height: 11, borderRadius: '50%', background: c, opacity: 0.85 }} />
+          ))}
+        </div>
+        <TerminalIcon size={13} style={{ color: 'rgba(255,255,255,0.3)', marginLeft: 4 }} />
+        <span style={{
+          fontSize: 11,
+          fontFamily: '"PPSupplyMono", monospace',
+          color: 'rgba(255,255,255,0.3)',
+          letterSpacing: '0.05em',
+        }}>
+          outrench — agent
+        </span>
+      </div>
+
+      {/* Terminal output area */}
+      <div style={{
+        flex: 1,
+        overflowY: 'auto',
+        padding: '14px 16px',
+        fontFamily: '"PPSupplyMono", "Courier New", monospace',
+        fontSize: 13,
+        lineHeight: 1.75,
+        color: 'rgba(255,255,255,0.7)',
+        scrollbarWidth: 'thin',
+        scrollbarColor: 'rgba(255,255,255,0.08) transparent',
+      }}>
+        {/* Session header */}
+        <div style={{ color: 'rgba(255,255,255,0.2)', marginBottom: 16, fontSize: 11 }}>
+          ──── session started · {new Date().toLocaleString()} ────
+        </div>
+
+        {/* Empty state */}
+        {lines.length === 0 && (
+          <div style={{ color: 'rgba(255,255,255,0.18)', fontSize: 12 }}>
+            Waiting for agent activity...
+          </div>
+        )}
+
+        {/* Log lines — populated by backend */}
+        {lines.map(line => (
+          <TerminalLine key={line.id} line={line} />
+        ))}
+
+        {/* Blinking cursor */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+          <span style={{ color: '#6366f1' }}>$</span>
+          <span style={{
+            display: 'inline-block',
+            width: 8, height: 15,
+            background: 'rgba(99,102,241,0.8)',
+            borderRadius: 1,
+            animation: 'blink 1.1s step-end infinite',
+          }} />
+        </div>
+
+        <div ref={bottomRef} />
+      </div>
+
+      <style>{`
+        @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0; } }
+      `}</style>
+    </div>
+  );
+}
+
+// colour map per line type
+const LINE_COLORS = {
+  info:        'rgba(255,255,255,0.6)',
+  success:     '#10b981',
+  error:       '#ef4444',
+  warn:        '#f59e0b',
+  cmd:         '#a5b4fc',
+  ai_response: '#818cf8',   // muted indigo — AI replies
+};
+
+function TerminalLine({ line }) {
+  const color = LINE_COLORS[line.type] || LINE_COLORS.info;
+  const isAI = line.type === 'ai_response';
+  const prefix = {
+    info:        '·',
+    success:     '✓',
+    error:       '✗',
+    warn:        '⚠',
+    cmd:         '$',
+    ai_response: '←',
+  }[line.type] || '·';
+
+  return (
+    <div style={{
+      display: 'flex',
+      gap: 10,
+      color,
+      fontSize: 13,
+      // AI response lines get a subtle left-border highlight
+      ...(isAI && {
+        background: 'rgba(99,102,241,0.06)',
+        borderLeft: '2px solid rgba(129,140,248,0.4)',
+        paddingLeft: 10,
+        marginLeft: -10,
+        borderRadius: '0 6px 6px 0',
+        paddingTop: 3,
+        paddingBottom: 3,
+      }),
+    }}>
+      <span style={{ flexShrink: 0, opacity: 0.6 }}>
+        {new Date(line.timestamp).toLocaleTimeString('en-US', { hour12: false })}
+      </span>
+      <span style={{ color, flexShrink: 0, fontWeight: isAI ? 600 : 400 }}>{prefix}</span>
+      <span style={{ wordBreak: 'break-word', fontStyle: isAI ? 'italic' : 'normal' }}>
+        {line.text}
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task Panel (right)
+// ─────────────────────────────────────────────────────────────────────────────
+function TaskPanel() {
+  // tasks will come from backend
+  // shape: [{ id, text, status: 'queued'|'running'|'done'|'skipped' }]
+  const tasks = [];
+
+  return (
+    <div style={{
+      flex: '1 1 35%',
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#0d0d10',
+      border: '1px solid rgba(255,255,255,0.06)',
+      borderRadius: 14,
+      overflow: 'hidden',
+      minWidth: 0,
+      minHeight: 0,
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '10px 14px',
+        borderBottom: '1px solid rgba(255,255,255,0.05)',
+        background: 'rgba(0,0,0,0.3)',
+        flexShrink: 0,
+      }}>
+        <ListTodo size={13} style={{ color: 'rgba(255,255,255,0.3)' }} />
+        <span style={{
+          fontSize: 11,
+          fontFamily: '"PPSupplyMono", monospace',
+          color: 'rgba(255,255,255,0.3)',
+          letterSpacing: '0.05em',
+        }}>
+          task queue
+        </span>
+
+        {/* Task count badge — will show real count when wired */}
+        <div style={{
+          marginLeft: 'auto',
+          background: 'rgba(99,102,241,0.15)',
+          border: '1px solid rgba(99,102,241,0.25)',
+          borderRadius: 999,
+          padding: '2px 8px',
+          fontSize: 10,
+          fontFamily: '"PPSupplyMono", monospace',
+          color: '#818cf8',
+        }}>
+          {tasks.length}
+        </div>
+      </div>
+
+      {/* Task list */}
+      <div style={{
+        flex: 1,
+        overflowY: 'auto',
+        padding: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        scrollbarWidth: 'thin',
+        scrollbarColor: 'rgba(255,255,255,0.06) transparent',
+      }}>
+        {tasks.length === 0 ? (
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 10,
+            color: 'rgba(255,255,255,0.12)',
+          }}>
+            <ListTodo size={32} strokeWidth={1} />
+            <span style={{
+              fontSize: 11,
+              fontFamily: '"PPSupplyMono", monospace',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+            }}>
+              No tasks queued
+            </span>
+          </div>
+        ) : (
+          tasks.map(task => <TaskCard key={task.id} task={task} />)
+        )}
+      </div>
+    </div>
+  );
+}
+
+const TASK_STATUS = {
+  queued:  { color: '#6366f1', label: 'Queued'  },
+  running: { color: '#f59e0b', label: 'Running' },
+  done:    { color: '#10b981', label: 'Done'    },
+  skipped: { color: 'rgba(255,255,255,0.2)', label: 'Skipped' },
+};
+
+function TaskCard({ task }) {
+  const { color, label } = TASK_STATUS[task.status] || TASK_STATUS.queued;
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.03)',
+      border: `1px solid ${color}22`,
+      borderLeft: `3px solid ${color}`,
+      borderRadius: 10,
+      padding: '10px 12px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+    }}>
+      <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.75)', lineHeight: 1.4 }}>
+        {task.text}
+      </span>
+      <span style={{
+        fontSize: 10,
+        fontFamily: '"PPSupplyMono", monospace',
+        color,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+      }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Command Input (bottom)
+// ─────────────────────────────────────────────────────────────────────────────
+function CommandInput({ value, onChange, onSubmit }) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        margin: '12px 16px 16px',
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 12,
+        padding: '4px 4px 4px 14px',
+        transition: 'border-color 0.2s',
+        flexShrink: 0,
+      }}
+      onFocus={e => e.currentTarget.style.borderColor = 'rgba(99,102,241,0.45)'}
+      onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
+    >
+      {/* Prompt symbol */}
+      <span style={{
+        fontSize: 14,
+        fontFamily: '"PPSupplyMono", monospace',
+        color: '#6366f1',
+        flexShrink: 0,
+        userSelect: 'none',
+      }}>
+        &gt;_
+      </span>
+
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Give the agent a task…"
+        style={{
+          flex: 1,
+          background: 'transparent',
+          border: 'none',
+          outline: 'none',
+          color: '#fff',
+          fontSize: 14,
+          fontFamily: '"PPSupplyMono", "Courier New", monospace',
+          letterSpacing: '0.01em',
+          caretColor: '#6366f1',
+        }}
+      />
+
+      <button
+        type="submit"
+        disabled={!value.trim()}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 36,
+          height: 36,
+          borderRadius: 9,
+          border: 'none',
+          background: value.trim()
+            ? 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+            : 'rgba(255,255,255,0.05)',
+          color: value.trim() ? '#fff' : 'rgba(255,255,255,0.2)',
+          cursor: value.trim() ? 'pointer' : 'not-allowed',
+          transition: 'all 0.2s',
+          flexShrink: 0,
+          boxShadow: value.trim() ? '0 0 16px rgba(99,102,241,0.35)' : 'none',
+        }}
+      >
+        <Send size={15} />
+      </button>
+    </form>
+  );
+}

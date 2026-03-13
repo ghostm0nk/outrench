@@ -1,11 +1,11 @@
 import json
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import httpx
 from dotenv import load_dotenv
-from supabase import create_client, Client
 from svix.webhooks import Webhook, WebhookVerificationError
 
 # Initialize dotenv
@@ -31,10 +31,66 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 CLERK_WEBHOOK_SECRET = os.getenv("CLERK_WEBHOOK_SECRET")
 
-supabase: Client = None
+class SupabaseRestWrapper:
+    def __init__(self, url, key):
+        self.base_url = f"{url}/rest/v1"
+        self.headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    def table(self, name):
+        url = f"{self.base_url}/{name}"
+        headers = self.headers
+        class TableWrapper:
+            def insert(self, data):
+                class Req:
+                    def execute(self):
+                        with httpx.Client() as c:
+                            return c.post(url, headers=headers, json=data).raise_for_status()
+                return Req()
+            def update(self, data):
+                class Req:
+                    def eq(self, k, v):
+                        self.k, self.v = k, v
+                        return self
+                    def execute(self):
+                        with httpx.Client() as c:
+                            return c.patch(f"{url}?{self.k}=eq.{self.v}", headers=headers, json=data).raise_for_status()
+                return Req()
+            def delete(self):
+                class Req:
+                    def eq(self, k, v):
+                        self.k, self.v = k, v
+                        return self
+                    def execute(self):
+                        with httpx.Client() as c:
+                            return c.delete(f"{url}?{self.k}=eq.{self.v}", headers=headers).raise_for_status()
+                return Req()
+            def upsert(self, data, on_conflict="id"):
+                class Req:
+                    def execute(self):
+                        h = headers.copy()
+                        h["Prefer"] = "resolution=merge-duplicates"
+                        with httpx.Client() as c:
+                            return c.post(f"{url}?on_conflict={on_conflict}", headers=h, json=data).raise_for_status()
+                return Req()
+            def select(self, fields="*"):
+                class Req:
+                    def eq(self, k, v):
+                        self.k, self.v = k, v
+                        return self
+                    def execute(self):
+                        with httpx.Client() as c:
+                            r = c.get(f"{url}?select={fields}&{self.k}=eq.{self.v}", headers=headers)
+                            r.raise_for_status()
+                            class Res:
+                                data = r.json()
+                            return Res()
+                return Req()
+        return TableWrapper()
+
+supabase = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
-    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-    print("Supabase client initialized successfully")
+    supabase = SupabaseRestWrapper(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    print("Supabase REST client initialized successfully")
 else:
     print("Warning: Supabase credentials missing from environment")
 
@@ -326,3 +382,47 @@ async def check_onboarding(clerk_id: str):
     except Exception as e:
         print(f"Check onboarding error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Agent WebSocket (Terminal Streaming) ───────────────────────────────────────
+@app.websocket("/api/agent/stream")
+async def agent_stream(websocket: WebSocket):
+    await websocket.accept()
+    print("Agent WebSocket connected.")
+    try:
+        while True:
+            # Wait for user input from the frontend
+            data = await websocket.receive_text()
+            print(f"Agent received task: {data}")
+            
+            # 1. AI Response (immediate acknowledgment)
+            response_text = f"Got it. I'll execute the following task: '{data}'. Queueing now."
+            await websocket.send_json({
+                "type": "ai_response",
+                "text": response_text
+            })
+            
+            # Wait a tiny bit for realism
+            await asyncio.sleep(1)
+            
+            # 2. Simulated Agent Activity (you'll replace this with real LangChain/CrewAI logic later)
+            activities = [
+                {"type": "info", "text": "Initializing browser context...", "delay": 1.5},
+                {"type": "info", "text": "Navigating to LinkedIn search...", "delay": 2.0},
+                {"type": "warn", "text": "Rate limit detected. Implementing dynamic backoff...", "delay": 1.0},
+                {"type": "success", "text": "Successfully retrieved 15 profiles.", "delay": 2.5},
+                {"type": "info", "text": "Drafting personalized messages...", "delay": 1.5},
+                {"type": "success", "text": "Task completed successfully. Queue is open.", "delay": 1.0},
+            ]
+            
+            for act in activities:
+                await asyncio.sleep(act["delay"])
+                await websocket.send_json({
+                    "type": act["type"],
+                    "text": act["text"]
+                })
+                
+    except WebSocketDisconnect:
+        print("Agent WebSocket disconnected.")
+    except Exception as e:
+        print(f"WebSocket error: {e}")
