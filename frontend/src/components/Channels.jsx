@@ -51,9 +51,13 @@ export default function Channels() {
     const timer = setInterval(checkDriver, 1000);
 
     const handleMessage = (event) => {
-      if (event.data.type === "PROFILE_DATA_READY") {
-        const profile = event.data.data;
-        syncToBackend(profile);
+      if (event.data.type === "SYNC_COMPLETE") {
+        setConnections(prev => ({ ...prev, [connectionKey]: event.data.profile || true }));
+        setIsSyncing(false);
+      }
+      if (event.data.type === "SYNC_ERROR") {
+        setError(event.data.error);
+        setIsSyncing(false);
       }
       if (event.data.type === "SESSION_NOT_FOUND") {
         setError(event.data.error);
@@ -82,48 +86,26 @@ export default function Channels() {
       .finally(() => setIsLoading(false));
   }, [user]);
 
-  const syncToBackend = async (profileData) => {
-    if (!user) return;
-    try {
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/channels/connect`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clerk_id: user.id,
-          platform: activePlatform,
-          account_type: activeAccount,
-          auth_token: "GHOST_DRIVER_SESSION",
-          handle: profileData.handle,
-          name: profileData.name,
-          avatar_url: profileData.avatar_url
-        })
-      });
-      if (!resp.ok) {
-        const errorData = await resp.json();
-        throw new Error(errorData.detail || "Failed to sync profile");
-      }
-      const data = await resp.json();
-      setConnections(prev => ({ ...prev, [connectionKey]: data.profile || true }));
-    } catch (err) {
-      console.error(err);
-      setError(err.message || "Failed to sync from Ghost Driver.");
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+
 
   const connectionKey = `${activePlatform}_${activeAccount}`;
   const isConnected = !!connections[connectionKey];
   const authToken = tokens[connectionKey] || '';
 
   const handleConnect = () => {
+    if (!user) return;
     setError('');
     setIsSyncing(true);
-    // Dispatch request to extension
-    window.postMessage({ type: "SYNC_PROFILE_REQUEST" }, "*");
+    // Tell the extension: "Sync THIS user for THIS platform"
+    window.postMessage({ 
+      type: "SYNC_PROFILE_REQUEST",
+      clerk_id: user.id,
+      platform: activePlatform,
+      account_type: activeAccount
+    }, "*");
     
     // Safety timeout
-    setTimeout(() => setIsSyncing(false), 5000);
+    setTimeout(() => setIsSyncing(false), 8000);
   };
 
   const handleDisconnect = async () => {
