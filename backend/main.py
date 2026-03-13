@@ -119,6 +119,13 @@ class OnboardingRequest(BaseModel):
     tone: str = "casual"
 
 
+class ChannelCredentialsRequest(BaseModel):
+    clerk_id: str
+    platform: str
+    account_type: str
+    auth_token: str
+
+
 # ── Content Safeguards (server-side) ───────────────────────────────────────────
 PROFANITY_LIST = [
     'fuck','shit','ass','bitch','damn','dick','cock','cunt','bastard','slut',
@@ -381,6 +388,57 @@ async def check_onboarding(clerk_id: str):
         return {"onboarded": False}
     except Exception as e:
         print(f"Check onboarding error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Channel Credentials endpoints ──────────────────────────────────────────────
+@app.post("/api/channels/connect")
+async def connect_channel(req: ChannelCredentialsRequest):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    try:
+        data = {
+            "clerk_id": req.clerk_id,
+            "platform": req.platform,
+            "account_type": req.account_type,
+            "auth_token": req.auth_token,
+        }
+        supabase.table("channel_credentials").upsert(data, on_conflict="clerk_id,platform,account_type").execute()
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Error saving channel credentials: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/channels/status/{clerk_id}")
+async def get_channel_status(clerk_id: str):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    try:
+        res = supabase.table("channel_credentials").select("platform,account_type,auth_token").eq("clerk_id", clerk_id).execute()
+        connections = {}
+        tokens = {}
+        for r in res.data:
+            key = f"{r['platform']}_{r['account_type']}"
+            connections[key] = True
+            tokens[key] = r['auth_token']
+        return {"connections": connections, "tokens": tokens}
+    except Exception as e:
+        print(f"Error getting channel status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/channels/disconnect/{clerk_id}/{platform}/{account_type}")
+async def disconnect_channel(clerk_id: str, platform: str, account_type: str):
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database not configured")
+    try:
+        # Make a direct REST call with multiple conditions since our simple wrapper only supports .eq() once
+        url = f"{supabase.base_url}/channel_credentials?clerk_id=eq.{clerk_id}&platform=eq.{platform}&account_type=eq.{account_type}"
+        with requests.Session() as c:
+            c.delete(url, headers=supabase.headers).raise_for_status()
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Error disconnecting channel: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

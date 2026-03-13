@@ -2,17 +2,18 @@ import React, { useState } from 'react';
 import { useUser, UserButton } from '@clerk/clerk-react';
 import { Home, BookOpen, FileText, Radio, BarChart2, User } from 'lucide-react';
 import Station from './Station';
+import Channels from './Channels';
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 const TOP_TABS = [
-  { id: 'station',   label: 'Station',          icon: Home },
-  { id: 'directory', label: 'Startup Directory', icon: BookOpen },
-  { id: 'notes',     label: 'Notes',             icon: FileText },
+  { id: 'station',   label: 'Station',   icon: Home },
+  { id: 'channels',  label: 'Channels',  icon: Radio },
+  { id: 'analytics', label: 'Analytics', icon: BarChart2 },
 ];
 
 const BOTTOM_TABS = [
-  { id: 'channels',  label: 'Channels',  icon: Radio },
-  { id: 'analytics', label: 'Analytics', icon: BarChart2 },
+  { id: 'directory', label: 'Directory', icon: BookOpen },
+  { id: 'notes',     label: 'Notes',     icon: FileText },
   { id: 'profile',   label: 'Profile',   icon: User, isProfile: true },
 ];
 
@@ -25,10 +26,10 @@ export default function Dashboard() {
   return (
     <div style={{
       height: '100vh',
-      background: '#0a0a0a',
+      background: '#0f0c08',
       backgroundImage: `
-        radial-gradient(circle at 20% 20%, rgba(99,102,241,0.07) 0%, transparent 55%),
-        radial-gradient(circle at 80% 80%, rgba(236,40,165,0.05) 0%, transparent 55%)
+        radial-gradient(circle at 20% 20%, rgba(245,158,11,0.08) 0%, transparent 55%),
+        radial-gradient(circle at 80% 80%, rgba(251,146,60,0.06) 0%, transparent 55%)
       `,
       color: '#fff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -46,9 +47,9 @@ export default function Dashboard() {
         overflow: 'hidden',
         paddingBottom: 90, // clearance for the floating nav bar
       }}>
-        {activeTab === 'station'
-          ? <Station />
-          : <PagePlaceholder activeTab={activeTab} />}
+        {activeTab === 'station' && <Station />}
+        {activeTab === 'channels' && <Channels />}
+        {activeTab !== 'station' && activeTab !== 'channels' && <PagePlaceholder activeTab={activeTab} />}
       </main>
 
       {/* ── Bottom Nav Bar ── */}
@@ -128,9 +129,9 @@ function NavPill({ tab, isActive, onClick }) {
           border: 'none',
           cursor: 'pointer',
           background: isActive
-            ? 'linear-gradient(135deg, rgba(99,102,241,0.25), rgba(139,92,246,0.15))'
+            ? 'linear-gradient(135deg, rgba(245,158,11,0.25), rgba(251,146,60,0.15))'
             : 'transparent',
-          boxShadow: isActive ? '0 0 0 1px rgba(99,102,241,0.35)' : 'none',
+          boxShadow: isActive ? '0 0 0 1px rgba(245,158,11,0.35)' : 'none',
           transition: 'all 0.25s cubic-bezier(0.34,1.56,0.64,1)',
           outline: 'none',
         }}
@@ -154,7 +155,7 @@ function NavPill({ tab, isActive, onClick }) {
           <span style={{
             fontSize: 13,
             fontWeight: 600,
-            color: '#a5b4fc',
+            color: '#fdba74',
             whiteSpace: 'nowrap',
             animation: 'fadeUp 0.2s ease-out',
           }}>
@@ -178,9 +179,9 @@ function NavPill({ tab, isActive, onClick }) {
         border: 'none',
         cursor: 'pointer',
         background: isActive
-          ? 'linear-gradient(135deg, rgba(99,102,241,0.25), rgba(139,92,246,0.15))'
+          ? 'linear-gradient(135deg, rgba(245,158,11,0.25), rgba(251,146,60,0.15))'
           : 'transparent',
-        boxShadow: isActive ? '0 0 0 1px rgba(99,102,241,0.35)' : 'none',
+        boxShadow: isActive ? '0 0 0 1px rgba(245,158,11,0.35)' : 'none',
         transition: 'all 0.25s cubic-bezier(0.34,1.56,0.64,1)',
         outline: 'none',
         overflow: 'hidden',
@@ -205,7 +206,7 @@ function NavPill({ tab, isActive, onClick }) {
         <span style={{
           fontSize: 13,
           fontWeight: 600,
-          color: '#a5b4fc',
+          color: '#fdba74',
           whiteSpace: 'nowrap',
           animation: 'fadeUp 0.2s ease-out',
         }}>

@@ -37,7 +37,7 @@ export default function Station() {
   // System notification state
   // status: 'ok' | 'warn' | 'error'
   const [sysStatus, setSysStatus] = useState('warn');
-  const [sysMessage, setSysMessage] = useState('Socket connecting...');
+  const [sysMessage, setSysMessage] = useState('Summoning Spirit...');
   const [sysExpanded, setSysExpanded] = useState(false);
   const [sysDetail, setSysDetail] = useState('');
 
@@ -53,8 +53,8 @@ export default function Station() {
 
     socket.onopen = () => {
       setSysStatus('ok');
-      setSysMessage('Agent Online');
-      pushLine('info', 'WebSocket connected. Agent ready.');
+      setSysMessage('Presence Active');
+      pushLine('info', 'Spirit connection established.');
     };
 
     socket.onmessage = (event) => {
@@ -70,13 +70,13 @@ export default function Station() {
 
     socket.onerror = (error) => {
       setSysStatus('error');
-      setSysMessage('Connection Error');
-      setSysDetail('Failed to connect to agent backend.');
+      setSysMessage('Summoning Failed');
+      setSysDetail('Could not reach the spirit realm (backend).');
     };
 
     socket.onclose = () => {
       setSysStatus('warn');
-      setSysMessage('Agent Disconnected');
+      setSysMessage('Essence Departed');
     };
 
     return () => {
@@ -148,9 +148,9 @@ export default function Station() {
 // Notification Bar
 // ─────────────────────────────────────────────────────────────────────────────
 const STATUS_CONFIG = {
-  ok:    { color: '#10b981', bg: 'rgba(16,185,129,0.06)',  Icon: CheckCircle2,  label: 'Operational' },
-  warn:  { color: '#f59e0b', bg: 'rgba(245,158,11,0.07)',  Icon: AlertTriangle,  label: 'Warning' },
-  error: { color: '#ef4444', bg: 'rgba(239,68,68,0.08)',   Icon: XCircle,        label: 'Error' },
+  ok:    { color: '#10b981', bg: 'rgba(16,185,129,0.06)',  Icon: CheckCircle2,  label: 'Spirit Summoned' },
+  warn:  { color: '#f59e0b', bg: 'rgba(245,158,11,0.07)',  Icon: AlertTriangle,  label: 'Presence Fading' },
+  error: { color: '#ef4444', bg: 'rgba(239,68,68,0.08)',   Icon: XCircle,        label: 'Essence Severed' },
 };
 
 function NotificationBar({ status, message, detail, expanded, onToggle }) {
@@ -278,11 +278,11 @@ function TerminalPanel({ lines }) {
       }}>
         {/* macOS-style traffic lights */}
         <div style={{ display: 'flex', gap: 6 }}>
-          {['#ff5f57','#febc2e','#28c840'].map(c => (
+          {['#ff5f57', '#febc2e', '#28c840'].map(c => (
             <div key={c} style={{ width: 11, height: 11, borderRadius: '50%', background: c, opacity: 0.85 }} />
           ))}
         </div>
-        
+
         <TerminalIcon size={13} style={{ color: 'rgba(255,255,255,0.3)', marginLeft: 14 }} />
         <span style={{
           fontSize: 11,
@@ -291,25 +291,25 @@ function TerminalPanel({ lines }) {
           letterSpacing: '0.05em',
           marginLeft: 8
         }}>
-          Spirit — Outrench Agent
+          Spirit
         </span>
 
         {/* Zoom Controls */}
-        <div style={{ 
-          marginLeft: 'auto', 
-          display: 'flex', 
-          alignItems: 'center', 
+        <div style={{
+          marginLeft: 'auto',
+          display: 'flex',
+          alignItems: 'center',
           gap: 4,
           background: 'rgba(255,255,255,0.03)',
           padding: '2px 6px',
           borderRadius: 6,
           border: '1px solid rgba(255,255,255,0.05)'
         }}>
-          <button 
+          <button
             onClick={zoomOut}
-            style={{ 
-              background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', 
-              cursor: 'pointer', padding: 4, display: 'flex' 
+            style={{
+              background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)',
+              cursor: 'pointer', padding: 4, display: 'flex'
             }}
             onMouseEnter={e => e.currentTarget.style.color = '#fff'}
             onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.4)'}
@@ -317,11 +317,11 @@ function TerminalPanel({ lines }) {
             <ZoomOut size={13} />
           </button>
           <div style={{ width: 1, height: 10, background: 'rgba(255,255,255,0.1)' }} />
-          <button 
+          <button
             onClick={zoomIn}
-            style={{ 
-              background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', 
-              cursor: 'pointer', padding: 4, display: 'flex' 
+            style={{
+              background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)',
+              cursor: 'pointer', padding: 4, display: 'flex'
             }}
             onMouseEnter={e => e.currentTarget.style.color = '#fff'}
             onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.4)'}
@@ -362,11 +362,11 @@ function TerminalPanel({ lines }) {
 
         {/* Blinking cursor */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-          <span style={{ color: '#6366f1' }}>$</span>
+          <span style={{ color: '#f59e0b' }}>$</span>
           <span style={{
             display: 'inline-block',
             width: 8, height: fontSize + 2,
-            background: 'rgba(99,102,241,0.8)',
+            background: 'rgba(245,158,11,0.8)',
             borderRadius: 1,
             animation: 'blink 1.1s step-end infinite',
           }} />
@@ -384,23 +384,23 @@ function TerminalPanel({ lines }) {
 
 // colour map per line type
 const LINE_COLORS = {
-  info:        'rgba(255,255,255,0.6)',
-  success:     '#10b981',
-  error:       '#ef4444',
-  warn:        '#f59e0b',
-  cmd:         '#a5b4fc',
-  ai_response: '#818cf8',   // muted indigo — AI replies
+  info: 'rgba(255,255,255,0.6)',
+  success: '#10b981',
+  error: '#ef4444',
+  warn: '#f59e0b',
+  cmd:         '#fdba74',
+  ai_response: '#fbbf24',   // amber — Spirit replies
 };
 
 function TerminalLine({ line, fontSize }) {
   const color = LINE_COLORS[line.type] || LINE_COLORS.info;
   const isAI = line.type === 'ai_response';
   const prefix = {
-    info:        '·',
-    success:     '✓',
-    error:       '✗',
-    warn:        '⚠',
-    cmd:         '$',
+    info: '·',
+    success: '✓',
+    error: '✗',
+    warn: '⚠',
+    cmd: '$',
     ai_response: '←',
   }[line.type] || '·';
 
@@ -527,9 +527,9 @@ function TaskPanel() {
 }
 
 const TASK_STATUS = {
-  queued:  { color: '#6366f1', label: 'Queued'  },
+  queued: { color: '#6366f1', label: 'Queued' },
   running: { color: '#f59e0b', label: 'Running' },
-  done:    { color: '#10b981', label: 'Done'    },
+  done: { color: '#10b981', label: 'Done' },
   skipped: { color: 'rgba(255,255,255,0.2)', label: 'Skipped' },
 };
 
@@ -588,7 +588,7 @@ function CommandInput({ value, onChange, onSubmit }) {
       <span style={{
         fontSize: 14,
         fontFamily: '"PPSupplyMono", monospace',
-        color: '#6366f1',
+        color: '#f59e0b',
         flexShrink: 0,
         userSelect: 'none',
       }}>
@@ -609,7 +609,7 @@ function CommandInput({ value, onChange, onSubmit }) {
           fontSize: 14,
           fontFamily: '"PPSupplyMono", "Courier New", monospace',
           letterSpacing: '0.01em',
-          caretColor: '#6366f1',
+          caretColor: '#f59e0b',
         }}
       />
 
@@ -625,13 +625,13 @@ function CommandInput({ value, onChange, onSubmit }) {
           borderRadius: 9,
           border: 'none',
           background: value.trim()
-            ? 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+            ? 'linear-gradient(135deg, #f59e0b, #d97706)'
             : 'rgba(255,255,255,0.05)',
           color: value.trim() ? '#fff' : 'rgba(255,255,255,0.2)',
           cursor: value.trim() ? 'pointer' : 'not-allowed',
           transition: 'all 0.2s',
           flexShrink: 0,
-          boxShadow: value.trim() ? '0 0 16px rgba(99,102,241,0.35)' : 'none',
+          boxShadow: value.trim() ? '0 0 16px rgba(245,158,11,0.35)' : 'none',
         }}
       >
         <Send size={15} />

@@ -132,6 +132,27 @@ Each tab is also a **separate full page view**.
 - We will soon implement a secure way to store and inject platform credentials (cookies, API keys, etc.) so the simulated steps become real browser/API actions.
 
 ---
+
+## Platform Strategy: Station vs. Channels
+To prevent overwhelming the user, Spirit's operations are divided into two distinct environments:
+
+### 1. The Station (Terminal)
+- **Purpose**: Background operations and direct outreach.
+- **Actions**: The agent handles DMs, comment replies, finding warm leads, and system-level operations quietly in the background. 
+- **User Role**: The user gives high-level instructions (`"Find 10 leads dealing with cold email issues"`) and observes the stream.
+
+### 2. The Channels (Content & Growth Room)
+- **Purpose**: Public brand building and audience growth.
+- **Platforms**: Strictly **Twitter** and **TikTok**.
+- **Accounts**: Spirit manages two distinct identities:
+  - **Personal Account**: Content and follows to build the founder's personal brand/visibility.
+  - **Product Account**: Official product updates, announcements, and brand awareness.
+- **Layout Approach**: A 3-column control board:
+  1. **Market Scout**: What the AI scraped/analyzed (inspiration, trends, virality).
+  2. **Content Queue**: Drafted posts/videos ready for the user to approve (`Post Now`).
+  3. **Growth Targets**: Recommended accounts to follow to build the network.
+
+---
 1. **Bot health indicator** — How does the user know if the bot is running, paused, or errored? Need a visible status signal.
 2. **Bot activity format** — Plain English summary cards? Timeline? Expandable logs?
 3. **Task confirmation flow** — After submitting in Notes, how does the user know it was received?
