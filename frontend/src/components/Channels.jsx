@@ -88,7 +88,9 @@ export default function Channels() {
       });
       if (!resp.ok) throw new Error("Failed to connect");
       
-      setConnections(prev => ({ ...prev, [connectionKey]: true }));
+      const data = await resp.json();
+      
+      setConnections(prev => ({ ...prev, [connectionKey]: data.profile || true }));
     } catch (err) {
       setError("Failed to save credentials to backend.");
       console.error(err);
@@ -183,6 +185,12 @@ export default function Channels() {
         <div style={{ display: 'flex', gap: 12 }}>
           {ACCOUNTS.map(acc => {
             const isActive = activeAccount === acc.id;
+            // Get profile data if connected
+            const profile = connections[`${activePlatform}_${acc.id}`];
+            const isConn = !!profile;
+            const displayHandle = isConn && profile.handle ? profile.handle : acc.handle;
+            const displayAvatar = isConn && profile.avatar_url ? profile.avatar_url : null;
+
             return (
               <button
                 key={acc.id}
@@ -202,11 +210,15 @@ export default function Channels() {
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: acc.badge }} />
+                  {displayAvatar ? (
+                    <img src={displayAvatar} alt="avatar" style={{ width: 14, height: 14, borderRadius: '50%', objectFit: 'cover' }} />
+                  ) : (
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: acc.badge }} />
+                  )}
                   <span style={{ fontWeight: 600 }}>{acc.label}</span>
                 </div>
                 <span style={{ fontSize: 10, color: isActive ? '#fca5a5' : 'rgba(255,255,255,0.3)', fontFamily: '"PPSupplyMono", monospace' }}>
-                  {acc.handle}
+                  {displayHandle}
                 </span>
               </button>
             );

@@ -8,6 +8,7 @@ import requests
 from dotenv import load_dotenv
 from svix.webhooks import Webhook, WebhookVerificationError
 from agent_logic import stream_agent_logic
+from twitter_api import verify_twitter_credentials
 
 # Initialize dotenv
 load_dotenv()
@@ -397,30 +398,54 @@ async def connect_channel(req: ChannelCredentialsRequest):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
 
+    handle = None
+    name = None
+    avatar_url = None
+
+    if req.platform == "twitter":
+        try:
+            profile = verify_twitter_credentials(req.auth_token)
+            handle = profile["handle"]
+            name = profile["name"]
+            avatar_url = profile["avatar_url"]
+        except Exception as e:
+            # If the token is dead or invalid, throw a 401 right back to the frontend
+            raise HTTPException(status_code=401, detail=str(e))
+    else:
+        # Placeholder for TikTok or others
+        pass
+
     try:
         data = {
             "clerk_id": req.clerk_id,
             "platform": req.platform,
             "account_type": req.account_type,
             "auth_token": req.auth_token,
+            "handle": handle,
+            "name": name,
+            "avatar_url": avatar_url
         }
         supabase.table("channel_credentials").upsert(data, on_conflict="clerk_id,platform,account_type").execute()
-        return {"status": "success"}
+        return {"status": "success", "profile": {"handle": handle, "name": name, "avatar_url": avatar_url}}
     except Exception as e:
         print(f"Error saving channel credentials: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Database save failed")
 
 @app.get("/api/channels/status/{clerk_id}")
 async def get_channel_status(clerk_id: str):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
     try:
-        res = supabase.table("channel_credentials").select("platform,account_type,auth_token").eq("clerk_id", clerk_id).execute()
+        res = supabase.table("channel_credentials").select("platform,account_type,auth_token,handle,name,avatar_url").eq("clerk_id", clerk_id).execute()
         connections = {}
         tokens = {}
         for r in res.data:
             key = f"{r['platform']}_{r['account_type']}"
-            connections[key] = True
+            connections[key] = {
+                "handle": r.get('handle'),
+                "name": r.get('name'),
+                "avatar_url": r.get('avatar_url')
+            }
             tokens[key] = r['auth_token']
         return {"connections": connections, "tokens": tokens}
     except Exception as e:
