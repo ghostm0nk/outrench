@@ -225,34 +225,60 @@ export default function Channels() {
           })}
         </div>
 
-        {/* Global Auto/Manual Toggle */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 11, fontFamily: '"PPSupplyMono", monospace', color: isAuto ? '#f59e0b' : 'rgba(255,255,255,0.3)', textTransform: 'uppercase' }}>
-            {isAuto ? 'Spirit Autonomous' : 'Require Approval'}
-          </span>
-          <button 
-            onClick={() => setIsAuto(!isAuto)}
-            style={{
-              width: 44, height: 22,
-              borderRadius: 20,
-              background: isAuto ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.08)',
-              border: `1px solid ${isAuto ? '#f59e0b' : 'rgba(255,255,255,0.1)'}`,
-              position: 'relative',
-              cursor: 'pointer',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              padding: 0,
-            }}
-          >
-            <div style={{
-              position: 'absolute',
-              top: 2, left: isAuto ? 24 : 2,
-              width: 16, height: 16,
-              borderRadius: '50%',
-              background: isAuto ? '#f59e0b' : 'rgba(255,255,255,0.3)',
-              boxShadow: isAuto ? '0 0 10px #f59e0b' : 'none',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            }} />
-          </button>
+        {/* Global Auto/Manual Toggle & Disconnect */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
+          {isConnected && (
+             <button 
+               onClick={handleDisconnect}
+               style={{
+                 background: 'rgba(239, 68, 68, 0.1)',
+                 border: '1px solid rgba(239, 68, 68, 0.2)',
+                 color: '#f87171',
+                 padding: '6px 14px',
+                 borderRadius: 99,
+                 fontSize: 12,
+                 fontWeight: 600,
+                 cursor: 'pointer',
+                 display: 'flex',
+                 alignItems: 'center',
+                 gap: 6,
+                 transition: 'all 0.2s',
+               }}
+               onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'; e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.4)'; }}
+               onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.2)'; }}
+             >
+               <XCircle size={14} /> Disconnect
+             </button>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 11, fontFamily: '"PPSupplyMono", monospace', color: isAuto ? '#f59e0b' : 'rgba(255,255,255,0.3)', textTransform: 'uppercase' }}>
+              {isAuto ? 'Spirit Autonomous' : 'Require Approval'}
+            </span>
+            <button 
+              onClick={() => setIsAuto(!isAuto)}
+              style={{
+                width: 44, height: 22,
+                borderRadius: 20,
+                background: isAuto ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.08)',
+                border: `1px solid ${isAuto ? '#f59e0b' : 'rgba(255,255,255,0.1)'}`,
+                position: 'relative',
+                cursor: 'pointer',
+                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                padding: 0,
+              }}
+            >
+              <div style={{
+                position: 'absolute',
+                top: 2, left: isAuto ? 24 : 2,
+                width: 16, height: 16,
+                borderRadius: '50%',
+                background: isAuto ? '#f59e0b' : 'rgba(255,255,255,0.3)',
+                boxShadow: isAuto ? '0 0 10px #f59e0b' : 'none',
+                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              }} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -426,14 +452,6 @@ export default function Channels() {
                 </div>
               </div>
 
-              <button 
-                onClick={handleDisconnect}
-                style={{ position: 'absolute', bottom: 12, right: 12, background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.3)', padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 10, transition: 'all 0.2s' }}
-                onMouseOver={(e) => e.target.style.color = '#fff'}
-                onMouseOut={(e) => e.target.style.color = 'rgba(255,255,255,0.3)'}
-              >
-                Disconnect
-              </button>
             </div>
           </>
         )}
