@@ -23,10 +23,9 @@ import {
 export default function Station() {
   const { user } = useUser();
   const [input, setInput] = useState('');
+  const [tasks, setTasks] = useState([]); // task queue for right panel
 
-  // Terminal lines — will be populated by backend WebSocket / polling.
-  // Shape: [{ id, timestamp, type: 'info'|'success'|'error'|'warn'|'cmd'|'ai_response', text }]
-  // For now the user's own commands echo locally as 'cmd' lines.
+  // Terminal lines shape: [{ id, timestamp, type, text }]
   const [lines, setLines] = useState([]);
 
   const pushLine = useCallback((type, text) => {
@@ -34,6 +33,27 @@ export default function Station() {
       ...prev,
       { id: Date.now() + Math.random(), timestamp: Date.now(), type, text },
     ]);
+  }, []);
+
+  // When a cmd line is pushed (user submitted), add a task card
+  const pushTask = useCallback((text) => {
+    const id = Date.now();
+    setTasks(prev => [
+      { id, text, status: 'running' },
+      ...prev.slice(0, 9), // keep last 10
+    ]);
+    return id;
+  }, []);
+
+  // When Spirit finishes (success/error line from backend), mark last running task done
+  const resolveTask = useCallback((isError) => {
+    setTasks(prev => {
+      const idx = prev.findIndex(t => t.status === 'running');
+      if (idx === -1) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], status: isError ? 'error' : 'done' };
+      return next;
+    });
   }, []);
 
   // System notification state
@@ -111,7 +131,12 @@ export default function Station() {
         socket.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type && data.text) pushLine(data.type, data.text);
+            if (data.type && data.text) {
+              pushLine(data.type, data.text);
+              // Resolve task on terminal success/error from backend
+              if (data.type === 'success' && data.text.includes('broadsearch complete')) resolveTask(false);
+              if (data.type === 'error') resolveTask(true);
+            }
           } catch (err) {
             console.error('WS parse error', err);
           }
@@ -156,8 +181,9 @@ export default function Station() {
     const cmd = input.trim();
     if (!cmd) return;
 
-    // Echo the command into the terminal immediately
+    // Echo the command into the terminal and add task card
     pushLine('cmd', cmd);
+    pushTask(cmd);
 
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
@@ -166,6 +192,7 @@ export default function Station() {
       }));
     } else {
       pushLine('error', 'Agent disconnected. Cannot send command.');
+      resolveTask(true);
     }
 
     setInput('');
@@ -200,7 +227,7 @@ export default function Station() {
         <TerminalPanel lines={lines} />
 
         {/* Right: Task Panel */}
-        <TaskPanel />
+        <TaskPanel tasks={tasks} />
       </div>
 
       {/* ── Command Input ── */}
@@ -505,11 +532,7 @@ function TerminalLine({ line, fontSize }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Task Panel (right)
 // ─────────────────────────────────────────────────────────────────────────────
-function TaskPanel() {
-  // tasks will come from backend
-  // shape: [{ id, text, status: 'queued'|'running'|'done'|'skipped' }]
-  const tasks = [];
-
+function TaskPanel({ tasks = [] }) {
   return (
     <div style={{
       flex: '1 1 35%',

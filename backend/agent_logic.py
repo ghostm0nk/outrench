@@ -145,7 +145,10 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
         # Save data to database if Spirit "found" something
         if supabase and clerk_id and step.get("data_to_save"):
             save = step["data_to_save"]
-            
+            leads_saved = 0
+            queue_saved = 0
+            trends_saved = 0
+
             # Save Leads
             if save.get("leads"):
                 for lead in save["leads"]:
@@ -159,8 +162,14 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
                             "reason": lead.get("reason", "Captured by Spirit Broadsearch"),
                             "avatar_url": "https://www.google.com/favicon.ico"
                         }).execute()
-                    except: pass
-            
+                        leads_saved += 1
+                    except Exception as e:
+                        print(f"[SAVE ERROR] market_leads: {e}")
+                        await websocket.send_json({
+                            "type": "warn",
+                            "text": f"Save warning (leads): {str(e)[:120]}"
+                        })
+
             # Save Queue (Captions/Hooks)
             if save.get("queue"):
                 for item in save["queue"]:
@@ -172,7 +181,13 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
                             "content": item.get("content", ""),
                             "status": "draft"
                         }).execute()
-                    except: pass
+                        queue_saved += 1
+                    except Exception as e:
+                        print(f"[SAVE ERROR] content_queue: {e}")
+                        await websocket.send_json({
+                            "type": "warn",
+                            "text": f"Save warning (queue): {str(e)[:120]}"
+                        })
 
             # Save Trends
             if save.get("trends"):
@@ -183,6 +198,23 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
                             "keyword": trend if isinstance(trend, str) else trend.get("keyword"),
                             "volume": "High"
                         }).execute()
-                    except: pass
+                        trends_saved += 1
+                    except Exception as e:
+                        print(f"[SAVE ERROR] growth_trends: {e}")
+                        await websocket.send_json({
+                            "type": "warn",
+                            "text": f"Save warning (trends): {str(e)[:120]}"
+                        })
+
+            # Confirm what was saved in the terminal
+            if leads_saved or queue_saved or trends_saved:
+                parts = []
+                if leads_saved: parts.append(f"{leads_saved} lead{'s' if leads_saved > 1 else ''}")
+                if queue_saved: parts.append(f"{queue_saved} draft{'s' if queue_saved > 1 else ''}")
+                if trends_saved: parts.append(f"{trends_saved} trend{'s' if trends_saved > 1 else ''}")
+                await websocket.send_json({
+                    "type": "success",
+                    "text": f"Saved to database: {', '.join(parts)}"
+                })
 
     await websocket.send_json({"type": "success", "text": "Spirit broadsearch complete. Artifacts placed in your Channels, Queue, and Growth tabs."})
