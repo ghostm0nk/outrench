@@ -451,7 +451,9 @@ function SignedInRouter() {
         setOnboarded(res.data.onboarded);
       } catch (err) {
         console.error('Failed to check onboarding status:', err);
-        setOnboarded(false); // Default to onboarding if check fails
+        // Default to Dashboard (true) on network/backend errors.
+        // Only show Onboarding if the backend explicitly says onboarded=false.
+        setOnboarded(true);
       }
     };
     checkOnboarding();
