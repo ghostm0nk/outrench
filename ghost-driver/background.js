@@ -7,16 +7,6 @@ chrome.action.setBadgeText({ text: "OK" });
 chrome.action.setBadgeBackgroundColor({ color: "#10b981" });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === "UPDATE_SPIRIT_LOG") {
-    chrome.storage.local.set({ spirit_log: request.text });
-    // Broadcast to the terminal on the home page via backend
-    fetch(`${API_URL}/api/spirit/log`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: request.text, type: 'info' })
-    }).catch(() => {});
-  }
-
   if (request.type === "TWITTER_PROFILE_FETCHED") {
     chrome.storage.local.set({ twitter_profile: request.data }, () => {
       broadcastToDashboards({ type: "PROFILE_DATA_READY", data: request.data });
@@ -42,8 +32,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           if (response.ok) {
             const data = await response.json();
             broadcastToDashboards({ type: "SYNC_COMPLETE", platform, account_type, profile: data.profile });
+          } else {
+            broadcastToDashboards({ type: "SYNC_ERROR", error: "Database Rejected the Spirit." });
           }
-        } catch (e) {}
+        } catch (e) {
+          broadcastToDashboards({ type: "SYNC_ERROR", error: "Ghost Driver blocked by Network." });
+        }
+      } else {
+        broadcastToDashboards({ type: "SESSION_NOT_FOUND", error: "Open an X tab first." });
       }
     });
   }
@@ -53,41 +49,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === "LEADS_SCRAPED") {
+    // We already have the clerk_id in the message or closure
     saveLeadsToBackend(request.leads);
-  }
-
-  if (request.type === "PERFORM_AUTO_REPLY") {
-      const { handle, text } = request;
-      performReply(handle, text);
   }
 });
 
 async function initiateScout(clerk_id) {
-  const targetId = clerk_id || "user_3AtApzHMYUEDxqNg59aVJzCvmrj"; 
   try {
-    const resp = await fetch(`${API_URL}/api/market/strategy/${targetId}`);
+    const resp = await fetch(`${API_URL}/api/market/strategy/${clerk_id}`);
     const { queries } = await resp.json();
-    if (!queries) return;
+    if (!queries || queries.length === 0) return;
 
     const query = queries[Math.floor(Math.random() * queries.length)];
+    
+    // Mission: Go to Home page (Avoid /explore which often triggers login gates for guests)
     const homeUrl = `https://x.com/home`;
-
-    // Log the mission start to the terminal
-    fetch(`${API_URL}/api/spirit/log`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: `Mission Plan: Hunting for "${query}"`, type: 'ai_response' })
-    }).catch(() => {});
 
     chrome.tabs.query({ url: ["*://*.twitter.com/*", "*://*.x.com/*"] }, (tabs) => {
       if (tabs.length > 0) {
+        // If we found a tab, use it. We'll navigate to home once to ensure we have the search bar.
         const tab = tabs[0];
         chrome.tabs.update(tab.id, { url: homeUrl, active: true }, () => {
+            // Wait for SPA to settle
             setTimeout(() => {
                 chrome.tabs.sendMessage(tab.id, { type: "BEGIN_TYPED_SEARCH", query });
             }, 3000);
         });
       } else {
+        // No tab? Create one.
         chrome.tabs.create({ url: homeUrl, active: true }, (tab) => {
             setTimeout(() => {
                 chrome.tabs.sendMessage(tab.id, { type: "BEGIN_TYPED_SEARCH", query });
@@ -95,29 +84,20 @@ async function initiateScout(clerk_id) {
         });
       }
     });
-  } catch (e) {}
-}
-
-async function performReply(handle, text) {
-    chrome.tabs.query({ url: ["*://*.twitter.com/*", "*://*.x.com/*"] }, (tabs) => {
-        if (tabs.length > 0) {
-            const tab = tabs[0];
-            chrome.tabs.update(tab.id, { active: true }, () => {
-                chrome.tabs.sendMessage(tab.id, { type: "GHOST_TYPE_REPLY", handle, text });
-            });
-        }
-    });
+  } catch (e) { console.error("Scout failed:", e); }
 }
 
 async function saveLeadsToBackend(leads) {
-  let clerkId = "user_3AtApzHMYUEDxqNg59aVJzCvmrj"; 
+  // Hardcoded for current dev user, ideally we'd store this in chrome.storage
+  let currentClerkId = "user_3AtApzHMYUEDxqNg59aVJzCvmrj"; 
+
   for (const lead of leads) {
     try {
       await fetch(`${API_URL}/api/market/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          clerk_id: clerkId,
+          clerk_id: currentClerkId,
           platform: 'twitter',
           handle: lead.handle,
           name: lead.name,
@@ -129,12 +109,6 @@ async function saveLeadsToBackend(leads) {
     } catch (e) {}
   }
   broadcastToDashboards({ type: "SCOUT_STATUS", status: "finished", found: leads.length });
-  
-  fetch(`${API_URL}/api/spirit/log`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: `Analysis Complete: ${leads.length} leads ingested into database.`, type: 'success' })
-  }).catch(() => {});
 }
 
 function broadcastToDashboards(msg) {

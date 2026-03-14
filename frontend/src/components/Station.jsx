@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import {
   CheckCircle2, AlertTriangle, XCircle,
   ChevronDown,
@@ -20,6 +21,7 @@ import {
 //   [Message Input]
 // ─────────────────────────────────────────────────────────────────────────────
 export default function Station() {
+  const { user } = useUser();
   const [input, setInput] = useState('');
 
   // Terminal lines — will be populated by backend WebSocket / polling.
@@ -93,7 +95,10 @@ export default function Station() {
     pushLine('cmd', cmd);
 
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(cmd);
+      socketRef.current.send(JSON.stringify({
+        task: cmd,
+        clerk_id: user?.id
+      }));
     } else {
       pushLine('error', 'Agent disconnected. Cannot send command.');
     }

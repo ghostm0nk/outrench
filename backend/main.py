@@ -203,36 +203,6 @@ def validate_onboarding(req: OnboardingRequest) -> str | None:
     
     return None
 
-# ── Connection Manager (Broadcasting to Terminal) ──────────────────────────
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except:
-                pass
-
-manager = ConnectionManager()
-
-async def log_to_terminal(text: str, type: str = "info"):
-    await manager.broadcast({"type": type, "text": text})
-
-@app.post("/api/spirit/log")
-async def spirit_log(req: Dict):
-    text = req.get("text", "")
-    type = req.get("type", "info")
-    await log_to_terminal(f"Spirit: {text}", type)
-    return {"status": "ok"}
 
 @app.get("/")
 def health_check():
@@ -507,45 +477,20 @@ async def get_market_strategy(clerk_id: str):
     Unique Value: {startup['unique_value']}
     
     Identify 5 specific Twitter search queries (keywords or phrases) that would find people currently experiencing the problem this startup solves.
-    Focus on "complaint" keywords, "advice seeking" questions, or conversational topics.
-    Return ONLY a JSON list of strings. Example: ["how to start a convo", "hate dating apps"]
+    Focus on "complaint" keywords or "advice seeking" questions.
+    Return ONLY a JSON list of strings.
     """
     
-    response = await get_ai_response(prompt, "You are a growth hacker specialized in social listening.")
+    response = await get_ai_response(prompt, "You are an expert market researcher.")
     try:
+        # Simple extraction
         import json
         start = response.find('[')
         end = response.rfind(']') + 1
         queries = json.loads(response[start:end])
         return {"queries": queries}
     except:
-        return {"queries": ["intro anxiety", "how to break the ice", "dating app fatigue"]}
-
-@app.post("/api/market/draft-reply")
-async def draft_market_reply(req: Dict):
-    # Expected keys: clerk_id, lead_content, lead_handle
-    clerk_id = req.get('clerk_id')
-    content = req.get('lead_content')
-    
-    # Fetch startup context
-    res = supabase.table("startups").select("*").eq("clerk_id", clerk_id).execute()
-    if not res.data: raise HTTPException(status_code=404, detail="Startup not found")
-    startup = res.data[0]
-
-    from agent_logic import get_ai_response
-    prompt = f"""
-    A user tweeted: "{content}"
-    
-    Our startup {startup['name']} solves this problem: {startup['problem_solved']}
-    Our unique value is: {startup['unique_value']}
-    
-    Draft a short, helpful, and CASUAL reply to this person. 
-    DONT be salesy. DONT use hashtags. Just be a helpful human.
-    Max 140 characters.
-    """
-    
-    reply = await get_ai_response(prompt, "You are a friendly, helpful community manager.")
-    return {"reply": reply.strip().replace('"', '')}
+        return {"queries": ["overthinking intros", "dating app fatigue", "first message anxiety"]}
 
 @app.post("/api/market/leads")
 async def save_market_lead(req: MarketLeadRequest):
@@ -611,15 +556,27 @@ async def disconnect_channel(clerk_id: str, platform: str, account_type: str):
 # ── Agent WebSocket (Terminal Streaming) ───────────────────────────────────────
 @app.websocket("/api/agent/stream")
 async def agent_stream(websocket: WebSocket):
-    await manager.connect(websocket)
+    await websocket.accept()
     print("Agent WebSocket connected.")
     try:
         while True:
-            data = await websocket.receive_text()
-            print(f"Agent received task: {data}")
-            await stream_agent_logic(data, websocket)
+            # Wait for user input from the frontend
+            raw_data = await websocket.receive_text()
+            try:
+                payload = json.loads(raw_data)
+                task = payload.get("task", "")
+                clerk_id = payload.get("clerk_id")
+            except:
+                # Fallback for old simple string messages
+                task = raw_data
+                clerk_id = None
+
+            print(f"Agent received task: {task} from {clerk_id}")
+            
+            # Use the new agent logic to plan and stream execution
+            await stream_agent_logic(task, websocket, clerk_id=clerk_id, supabase=supabase)
+                
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
         print("Agent WebSocket disconnected.")
     except Exception as e:
         print(f"WebSocket error: {e}")

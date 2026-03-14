@@ -40,7 +40,6 @@ export default function Channels() {
   const [isDriverActive, setIsDriverActive] = useState(false);
   const [marketLeads, setMarketLeads] = useState([]);
   const [isScouting, setIsScouting] = useState(false);
-  const [isReplying, setIsReplying] = useState({}); // lead_id -> boolean
 
   // Check for Extension presence & Listen for data
   useEffect(() => {
@@ -120,36 +119,7 @@ export default function Channels() {
     setIsScouting(true);
     window.postMessage({ type: "START_MARKET_SCOUT", clerk_id: user.id }, "*");
     // Safety timeout
-    setTimeout(() => setIsScouting(false), 45000);
-  };
-
-  const handleReply = async (lead) => {
-    if (!user) return;
-    setIsReplying(prev => ({ ...prev, [lead.id]: true }));
-    try {
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/market/draft-reply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clerk_id: user.id,
-          lead_content: lead.content,
-          lead_handle: lead.handle
-        })
-      });
-      const data = await resp.json();
-      if (data.reply) {
-        // Send to extension to perform the physical action
-        window.postMessage({
-          type: "SEND_AUTO_REPLY",
-          handle: lead.handle,
-          text: data.reply
-        }, "*");
-      }
-    } catch (err) {
-      console.error("Failed to draft reply", err);
-    } finally {
-      setIsReplying(prev => ({ ...prev, [lead.id]: false }));
-    }
+    setTimeout(() => setIsScouting(false), 30000);
   };
 
 
@@ -491,45 +461,10 @@ export default function Channels() {
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', opacity: 0.5 }}>
                     <Search size={32} style={{ marginBottom: 16 }} />
                     <div style={{ fontSize: 13, fontWeight: 600 }}>No Signals Found Yet</div>
-                    <div style={{ fontSize: 11, marginTop: 8, maxWidth: 180 }}>Spirit needs to scan {activePlatform} for trending pain points.</div>
-                    <button 
-                      onClick={initiateScout}
-                      disabled={isScouting}
-                      style={{ 
-                        marginTop: 20,
-                        padding: '8px 16px',
-                        background: '#fbbf24',
-                        border: 'none',
-                        borderRadius: 8,
-                        color: '#000',
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      {isScouting ? 'Scouting...' : 'Initiate Scan'}
-                    </button>
+                    <div style={{ fontSize: 11, marginTop: 8, maxWidth: 180 }}>Spirit is scouting the digital realm for trending pain points.</div>
                   </div>
                 ) : (
                   <>
-                    <button 
-                      onClick={initiateScout}
-                      disabled={isScouting}
-                      style={{ 
-                        width: '100%',
-                        padding: '8px',
-                        background: 'rgba(251, 191, 36, 0.1)',
-                        border: '1px solid rgba(251, 191, 36, 0.2)',
-                        borderRadius: 8,
-                        color: '#fbbf24',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        marginBottom: 10
-                      }}
-                    >
-                      {isScouting ? 'Scouting Active...' : 'Re-initiate Scan'}
-                    </button>
                     {marketLeads.map(lead => (
                       <div key={lead.id} style={{ 
                         background: 'rgba(255,255,255,0.03)', 
@@ -547,31 +482,9 @@ export default function Channels() {
                         <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', margin: '0 0 8px 0', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                           {lead.content}
                         </p>
-                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: 4, marginBottom: 8 }}>
+                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: 4 }}>
                           Reason: {lead.reason}
                         </div>
-                        <button 
-                          onClick={() => handleReply(lead)}
-                          disabled={isReplying[lead.id]}
-                          style={{
-                            width: '100%',
-                            padding: '6px',
-                            background: '#fbbf24',
-                            border: 'none',
-                            borderRadius: 6,
-                            color: '#000',
-                            fontSize: 10,
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4
-                          }}
-                        >
-                          <MessageSquare size={12} />
-                          {isReplying[lead.id] ? 'Drafting...' : 'Spirit Reply'}
-                        </button>
                       </div>
                     ))}
                   </>
