@@ -10,7 +10,7 @@ import {
   Activity,
   ZoomIn,
   ZoomOut,
-  ListTodo
+  BarChart2,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,7 +23,10 @@ import {
 export default function Station() {
   const { user } = useUser();
   const [input, setInput] = useState('');
-  const [tasks, setTasks] = useState([]); // task queue for right panel
+  // Session scoreboard — totals accumulate from backend save confirmations
+  const [sessionStats, setSessionStats] = useState({ leads: 0, drafts: 0, trends: 0, runs: 0 });
+  // Last 5 commands this session
+  const [cmdHistory, setCmdHistory] = useState([]);
 
   // Terminal lines shape: [{ id, timestamp, type, text }]
   const [lines, setLines] = useState([]);
@@ -35,25 +38,23 @@ export default function Station() {
     ]);
   }, []);
 
-  // When a cmd line is pushed (user submitted), add a task card
-  const pushTask = useCallback((text) => {
-    const id = Date.now();
-    setTasks(prev => [
-      { id, text, status: 'running' },
-      ...prev.slice(0, 9), // keep last 10
-    ]);
-    return id;
-  }, []);
-
-  // When Spirit finishes (success/error line from backend), mark last running task done
-  const resolveTask = useCallback((isError) => {
-    setTasks(prev => {
-      const idx = prev.findIndex(t => t.status === 'running');
-      if (idx === -1) return prev;
-      const next = [...prev];
-      next[idx] = { ...next[idx], status: isError ? 'error' : 'done' };
-      return next;
-    });
+  // Parse "Saved to database: 3 leads, 2 drafts, 1 trend" into numbers
+  const parseSaveLine = useCallback((text) => {
+    const leads  = (text.match(/(\d+)\s+lead/)  || [])[1];
+    const drafts = (text.match(/(\d+)\s+draft/) || [])[1];
+    const trends = (text.match(/(\d+)\s+trend/) || [])[1];
+    if (leads || drafts || trends) {
+      setSessionStats(prev => ({
+        leads:  prev.leads  + (parseInt(leads)  || 0),
+        drafts: prev.drafts + (parseInt(drafts) || 0),
+        trends: prev.trends + (parseInt(trends) || 0),
+        runs: prev.runs,
+      }));
+    }
+    // Count completed runs
+    if (text.includes('broadsearch complete')) {
+      setSessionStats(prev => ({ ...prev, runs: prev.runs + 1 }));
+    }
   }, []);
 
   // System notification state
@@ -133,9 +134,7 @@ export default function Station() {
             const data = JSON.parse(event.data);
             if (data.type && data.text) {
               pushLine(data.type, data.text);
-              // Resolve task on terminal success/error from backend
-              if (data.type === 'success' && data.text.includes('broadsearch complete')) resolveTask(false);
-              if (data.type === 'error') resolveTask(true);
+              if (data.type === 'success') parseSaveLine(data.text);
             }
           } catch (err) {
             console.error('WS parse error', err);
@@ -181,18 +180,13 @@ export default function Station() {
     const cmd = input.trim();
     if (!cmd) return;
 
-    // Echo the command into the terminal and add task card
     pushLine('cmd', cmd);
-    pushTask(cmd);
+    setCmdHistory(prev => [{ id: Date.now(), text: cmd, ts: Date.now() }, ...prev].slice(0, 5));
 
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({
-        task: cmd,
-        clerk_id: user?.id
-      }));
+      socketRef.current.send(JSON.stringify({ task: cmd, clerk_id: user?.id }));
     } else {
       pushLine('error', 'Agent disconnected. Cannot send command.');
-      resolveTask(true);
     }
 
     setInput('');
@@ -226,8 +220,8 @@ export default function Station() {
         {/* Left: Terminal */}
         <TerminalPanel lines={lines} />
 
-        {/* Right: Task Panel */}
-        <TaskPanel tasks={tasks} />
+        {/* Right: Session Scoreboard */}
+        <ResultsPanel stats={sessionStats} history={cmdHistory} />
       </div>
 
       {/* ── Command Input ── */}
@@ -530,9 +524,45 @@ function TerminalLine({ line, fontSize }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Task Panel (right)
+// Results Panel (right) — session scoreboard
 // ─────────────────────────────────────────────────────────────────────────────
-function TaskPanel({ tasks = [] }) {
+function Stat({ label, value, color, icon }) {
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'rgba(255,255,255,0.03)',
+      border: `1px solid ${color}22`,
+      borderRadius: 12,
+      padding: '16px 10px',
+      gap: 6,
+      flex: 1,
+      minWidth: 0,
+    }}>
+      <span style={{ fontSize: 22, lineHeight: 1 }}>{icon}</span>
+      <span style={{
+        fontSize: 28,
+        fontWeight: 800,
+        color,
+        fontVariantNumeric: 'tabular-nums',
+        lineHeight: 1,
+      }}>{value}</span>
+      <span style={{
+        fontSize: 9,
+        fontFamily: '"PPSupplyMono", monospace',
+        color: 'rgba(255,255,255,0.3)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.1em',
+      }}>{label}</span>
+    </div>
+  );
+}
+
+function ResultsPanel({ stats = { leads: 0, drafts: 0, trends: 0, runs: 0 }, history = [] }) {
+  const isEmpty = stats.leads === 0 && stats.drafts === 0 && stats.trends === 0;
+
   return (
     <div style={{
       flex: '1 1 35%',
@@ -555,43 +585,34 @@ function TaskPanel({ tasks = [] }) {
         background: 'rgba(0,0,0,0.3)',
         flexShrink: 0,
       }}>
-        <ListTodo size={13} style={{ color: 'rgba(255,255,255,0.3)' }} />
+        <BarChart2 size={13} style={{ color: 'rgba(255,255,255,0.3)' }} />
         <span style={{
           fontSize: 11,
           fontFamily: '"PPSupplyMono", monospace',
           color: 'rgba(255,255,255,0.3)',
           letterSpacing: '0.05em',
         }}>
-          task queue
+          session results
         </span>
-
-        {/* Task count badge — will show real count when wired */}
-        <div style={{
-          marginLeft: 'auto',
-          background: 'rgba(99,102,241,0.15)',
-          border: '1px solid rgba(99,102,241,0.25)',
-          borderRadius: 999,
-          padding: '2px 8px',
-          fontSize: 10,
-          fontFamily: '"PPSupplyMono", monospace',
-          color: '#818cf8',
-        }}>
-          {tasks.length}
-        </div>
+        {stats.runs > 0 && (
+          <div style={{
+            marginLeft: 'auto',
+            background: 'rgba(16,185,129,0.12)',
+            border: '1px solid rgba(16,185,129,0.25)',
+            borderRadius: 999,
+            padding: '2px 8px',
+            fontSize: 10,
+            fontFamily: '"PPSupplyMono", monospace',
+            color: '#10b981',
+          }}>
+            {stats.runs} run{stats.runs !== 1 ? 's' : ''}
+          </div>
+        )}
       </div>
 
-      {/* Task list */}
-      <div style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: 12,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        scrollbarWidth: 'thin',
-        scrollbarColor: 'rgba(255,255,255,0.06) transparent',
-      }}>
-        {tasks.length === 0 ? (
+      {/* Body */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {isEmpty ? (
           <div style={{
             flex: 1,
             display: 'flex',
@@ -599,20 +620,53 @@ function TaskPanel({ tasks = [] }) {
             alignItems: 'center',
             justifyContent: 'center',
             gap: 10,
-            color: 'rgba(255,255,255,0.12)',
+            color: 'rgba(255,255,255,0.1)',
           }}>
-            <ListTodo size={32} strokeWidth={1} />
-            <span style={{
-              fontSize: 11,
-              fontFamily: '"PPSupplyMono", monospace',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-            }}>
-              No tasks queued
+            <BarChart2 size={32} strokeWidth={1} />
+            <span style={{ fontSize: 11, fontFamily: '"PPSupplyMono", monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              No results yet
+            </span>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.08)', textAlign: 'center' }}>
+              Give Spirit a task to start scouting
             </span>
           </div>
         ) : (
-          tasks.map(task => <TaskCard key={task.id} task={task} />)
+          <>
+            {/* Stats grid */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Stat label="Leads" value={stats.leads} color="#818cf8" icon="👤" />
+              <Stat label="Drafts" value={stats.drafts} color="#fbbf24" icon="✍️" />
+              <Stat label="Trends" value={stats.trends} color="#10b981" icon="📈" />
+            </div>
+
+            {/* Command history */}
+            {history.length > 0 && (
+              <div>
+                <div style={{ fontSize: 9, fontFamily: '"PPSupplyMono", monospace', color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+                  Commands this session
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {history.map(h => (
+                    <div key={h.id} style={{
+                      fontSize: 11,
+                      fontFamily: '"PPSupplyMono", monospace',
+                      color: 'rgba(255,255,255,0.4)',
+                      background: 'rgba(255,255,255,0.02)',
+                      border: '1px solid rgba(255,255,255,0.04)',
+                      borderRadius: 6,
+                      padding: '6px 10px',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}>
+                      <span style={{ color: '#fdba74', marginRight: 6 }}>$</span>
+                      {h.text}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
