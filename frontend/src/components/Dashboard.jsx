@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useUser, UserButton } from '@clerk/clerk-react';
 import { Home, BookOpen, FileText, Radio, BarChart2, User } from 'lucide-react';
 import Station from './Station';
@@ -21,110 +21,7 @@ const ALL_TABS = [...TOP_TABS, ...BOTTOM_TABS];
 
 // ── Dashboard Shell ───────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { user } = useUser();
   const [activeTab, setActiveTab] = useState('station');
-
-  // ── Terminal state lifted here so it survives tab switches ──
-  const [lines, setLines] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const socketRef = useRef(null);
-  const retryTimerRef = useRef(null);
-  const retryCountRef = useRef(0);
-  const unmountedRef = useRef(false);
-  const connectRef = useRef(null);
-  const [sysStatus, setSysStatus] = useState('warn');
-  const [sysMessage, setSysMessage] = useState('Waking Spirit...');
-  const [sysDetail, setSysDetail] = useState('');
-
-  const pushLine = useCallback((type, text) => {
-    setLines(prev => [...prev, { id: Date.now() + Math.random(), timestamp: Date.now(), type, text }]);
-  }, []);
-
-  const pushTask = useCallback((text) => {
-    setTasks(prev => [{ id: Date.now(), text, status: 'running' }, ...prev.slice(0, 9)]);
-  }, []);
-
-  const resolveTask = useCallback((isError) => {
-    setTasks(prev => {
-      const idx = prev.findIndex(t => t.status === 'running');
-      if (idx === -1) return prev;
-      const next = [...prev];
-      next[idx] = { ...next[idx], status: isError ? 'error' : 'done' };
-      return next;
-    });
-  }, []);
-
-  const scheduleRetry = useCallback((shouldRetry) => {
-    if (!shouldRetry || unmountedRef.current) { setSysStatus('warn'); setSysMessage('Disconnected'); return; }
-    const delays = [2, 4, 8, 16, 30];
-    const delay = delays[Math.min(retryCountRef.current, delays.length - 1)];
-    retryCountRef.current += 1;
-    setSysStatus('warn');
-    setSysMessage(`Reconnecting in ${delay}s...`);
-    let remaining = delay;
-    clearInterval(retryTimerRef.current);
-    retryTimerRef.current = setInterval(() => {
-      remaining -= 1;
-      if (remaining <= 0) { clearInterval(retryTimerRef.current); if (!unmountedRef.current) { setSysMessage('Attempting reconnect...'); connectRef.current?.(); } }
-      else setSysMessage(`Reconnecting in ${remaining}s...`);
-    }, 1000);
-  }, []);
-
-  const connect = useCallback(() => {
-    if (unmountedRef.current) return;
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-    const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/agent/stream';
-    setSysStatus('warn'); setSysMessage('Waking Spirit...'); setSysDetail('');
-    fetch(`${apiUrl}/api/ping`, { signal: AbortSignal.timeout(8000) })
-      .then(() => {
-        if (unmountedRef.current) return;
-        setSysMessage('Opening channel...');
-        const socket = new WebSocket(wsUrl);
-        socketRef.current = socket;
-        socket.onopen = () => {
-          if (unmountedRef.current) { socket.close(); return; }
-          retryCountRef.current = 0;
-          setSysStatus('ok'); setSysMessage('Presence Active'); setSysDetail('');
-          pushLine('info', 'Spirit connection established.');
-        };
-        socket.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.type && data.text) {
-              pushLine(data.type, data.text);
-              if (data.type === 'success' && data.text.includes('broadsearch complete')) resolveTask(false);
-              if (data.type === 'error') resolveTask(true);
-            }
-          } catch (err) { console.error('WS parse error', err); }
-        };
-        socket.onerror = () => {};
-        socket.onclose = (event) => { if (!unmountedRef.current) scheduleRetry(event.code !== 1000); };
-      })
-      .catch((err) => {
-        if (unmountedRef.current) return;
-        const msg = err?.name === 'TimeoutError' ? 'Backend taking too long (>8s).' : 'Cannot reach backend.';
-        setSysDetail(`${msg} Retrying automatically.`);
-        scheduleRetry(true);
-      });
-  }, [pushLine, scheduleRetry, resolveTask]);
-
-  useEffect(() => { connectRef.current = connect; }, [connect]);
-  useEffect(() => {
-    unmountedRef.current = false;
-    connect();
-    return () => { unmountedRef.current = true; clearInterval(retryTimerRef.current); socketRef.current?.close(1000, 'unmounted'); };
-  }, []);
-
-  const sendCommand = useCallback((cmd) => {
-    pushLine('cmd', cmd);
-    pushTask(cmd);
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ task: cmd, clerk_id: user?.id }));
-    } else {
-      pushLine('error', 'Agent disconnected. Cannot send command.');
-      resolveTask(true);
-    }
-  }, [pushLine, pushTask, resolveTask, user]);
 
   return (
     <div style={{
@@ -148,18 +45,9 @@ export default function Dashboard() {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        paddingBottom: 90,
+        paddingBottom: 90, // clearance for the floating nav bar
       }}>
-        {activeTab === 'station' && (
-          <Station
-            lines={lines}
-            tasks={tasks}
-            sysStatus={sysStatus}
-            sysMessage={sysMessage}
-            sysDetail={sysDetail}
-            onCommand={sendCommand}
-          />
-        )}
+        {activeTab === 'station' && <Station />}
         {activeTab === 'channels' && <Channels />}
         {activeTab !== 'station' && activeTab !== 'channels' && <PagePlaceholder activeTab={activeTab} />}
       </main>

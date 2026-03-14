@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import {
   CheckCircle2, AlertTriangle, XCircle,
   ChevronDown,
@@ -20,18 +20,183 @@ import {
 //   [Terminal  |  Task Panel]
 //   [Message Input]
 // ─────────────────────────────────────────────────────────────────────────────
-export default function Station({ lines = [], tasks = [], sysStatus = 'warn', sysMessage = 'Waking Spirit...', sysDetail = '', onCommand }) {
+export default function Station() {
+  const { user } = useUser();
   const [input, setInput] = useState('');
+  const [tasks, setTasks] = useState([]); // task queue for right panel
+
+  // Terminal lines shape: [{ id, timestamp, type, text }]
+  const [lines, setLines] = useState([]);
+
+  const pushLine = useCallback((type, text) => {
+    setLines(prev => [
+      ...prev,
+      { id: Date.now() + Math.random(), timestamp: Date.now(), type, text },
+    ]);
+  }, []);
+
+  // When a cmd line is pushed (user submitted), add a task card
+  const pushTask = useCallback((text) => {
+    const id = Date.now();
+    setTasks(prev => [
+      { id, text, status: 'running' },
+      ...prev.slice(0, 9), // keep last 10
+    ]);
+    return id;
+  }, []);
+
+  // When Spirit finishes (success/error line from backend), mark last running task done
+  const resolveTask = useCallback((isError) => {
+    setTasks(prev => {
+      const idx = prev.findIndex(t => t.status === 'running');
+      if (idx === -1) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], status: isError ? 'error' : 'done' };
+      return next;
+    });
+  }, []);
+
+  // System notification state
+  // status: 'ok' | 'warn' | 'error'
+  const [sysStatus, setSysStatus] = useState('warn');
+  const [sysMessage, setSysMessage] = useState('Summoning Spirit...');
   const [sysExpanded, setSysExpanded] = useState(false);
+  const [sysDetail, setSysDetail] = useState('');
+
+  const socketRef = useRef(null);
+  const retryTimerRef = useRef(null);
+  const retryCountRef = useRef(0);
+  const unmountedRef = useRef(false);
+  const connectRef = useRef(null); // ref to break circular dependency
+
+  const scheduleRetry = useCallback((shouldRetry) => {
+    if (!shouldRetry || unmountedRef.current) {
+      setSysStatus('warn');
+      setSysMessage('Disconnected');
+      return;
+    }
+
+    const delays = [2, 4, 8, 16, 30];
+    const delay = delays[Math.min(retryCountRef.current, delays.length - 1)];
+    retryCountRef.current += 1;
+
+    setSysStatus('warn');
+    setSysMessage(`Reconnecting in ${delay}s...`);
+
+    let remaining = delay;
+    clearInterval(retryTimerRef.current);
+    retryTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(retryTimerRef.current);
+        if (!unmountedRef.current) {
+          setSysMessage('Attempting reconnect...');
+          connectRef.current?.(); // call via ref — no circular dep
+        }
+      } else {
+        setSysMessage(`Reconnecting in ${remaining}s...`);
+      }
+    }, 1000);
+  }, []);
+
+  const connect = useCallback(() => {
+    if (unmountedRef.current) return;
+
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/agent/stream';
+
+    setSysStatus('warn');
+    setSysMessage('Waking Spirit...');
+    setSysDetail('');
+
+    // Step 1: Ping to wake the Render dyno before opening WebSocket
+    fetch(`${apiUrl}/api/ping`, { signal: AbortSignal.timeout(8000) })
+      .then(() => {
+        if (unmountedRef.current) return;
+        setSysMessage('Opening channel...');
+
+        // Step 2: Open WebSocket now that the dyno is awake
+        const socket = new WebSocket(wsUrl);
+        socketRef.current = socket;
+
+        socket.onopen = () => {
+          if (unmountedRef.current) { socket.close(); return; }
+          retryCountRef.current = 0;
+          setSysStatus('ok');
+          setSysMessage('Presence Active');
+          setSysDetail('');
+          pushLine('info', 'Spirit connection established.');
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type && data.text) {
+              pushLine(data.type, data.text);
+              // Resolve task on terminal success/error from backend
+              if (data.type === 'success' && data.text.includes('broadsearch complete')) resolveTask(false);
+              if (data.type === 'error') resolveTask(true);
+            }
+          } catch (err) {
+            console.error('WS parse error', err);
+          }
+        };
+
+        socket.onerror = () => {
+          // onerror always fires before onclose — let onclose handle retry
+        };
+
+        socket.onclose = (event) => {
+          if (unmountedRef.current) return;
+          scheduleRetry(event.code !== 1000);
+        };
+      })
+      .catch((err) => {
+        if (unmountedRef.current) return;
+        const msg = err?.name === 'TimeoutError'
+          ? 'Backend is taking too long to wake (>8s).'
+          : 'Cannot reach backend at configured URL.';
+        setSysDetail(`${msg} Retrying automatically.`);
+        scheduleRetry(true);
+      });
+  }, [pushLine, scheduleRetry]);
+
+  useEffect(() => {
+    connectRef.current = connect; // keep ref in sync
+  }, [connect]);
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    connect();
+
+    return () => {
+      unmountedRef.current = true;
+      clearInterval(retryTimerRef.current);
+      socketRef.current?.close(1000, 'Component unmounted');
+    };
+  }, []); // intentionally empty — connect() is stable via refs
 
   const handleSubmit = (e) => {
     e.preventDefault();
     const cmd = input.trim();
     if (!cmd) return;
-    onCommand?.(cmd);
+
+    // Echo the command into the terminal and add task card
+    pushLine('cmd', cmd);
+    pushTask(cmd);
+
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        task: cmd,
+        clerk_id: user?.id
+      }));
+    } else {
+      pushLine('error', 'Agent disconnected. Cannot send command.');
+      resolveTask(true);
+    }
+
     setInput('');
   };
-
 
   return (
     <div style={{
