@@ -9,6 +9,12 @@ chrome.action.setBadgeBackgroundColor({ color: "#10b981" });
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === "UPDATE_SPIRIT_LOG") {
     chrome.storage.local.set({ spirit_log: request.text });
+    // Broadcast to the terminal on the home page via backend
+    fetch(`${API_URL}/api/spirit/log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: request.text, type: 'info' })
+    }).catch(() => {});
   }
 
   if (request.type === "TWITTER_PROFILE_FETCHED") {
@@ -66,6 +72,13 @@ async function initiateScout(clerk_id) {
     const query = queries[Math.floor(Math.random() * queries.length)];
     const homeUrl = `https://x.com/home`;
 
+    // Log the mission start to the terminal
+    fetch(`${API_URL}/api/spirit/log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `Mission Plan: Hunting for "${query}"`, type: 'ai_response' })
+    }).catch(() => {});
+
     chrome.tabs.query({ url: ["*://*.twitter.com/*", "*://*.x.com/*"] }, (tabs) => {
       if (tabs.length > 0) {
         const tab = tabs[0];
@@ -116,6 +129,12 @@ async function saveLeadsToBackend(leads) {
     } catch (e) {}
   }
   broadcastToDashboards({ type: "SCOUT_STATUS", status: "finished", found: leads.length });
+  
+  fetch(`${API_URL}/api/spirit/log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: `Analysis Complete: ${leads.length} leads ingested into database.`, type: 'success' })
+  }).catch(() => {});
 }
 
 function broadcastToDashboards(msg) {

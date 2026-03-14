@@ -203,6 +203,36 @@ def validate_onboarding(req: OnboardingRequest) -> str | None:
     
     return None
 
+# ── Connection Manager (Broadcasting to Terminal) ──────────────────────────
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except:
+                pass
+
+manager = ConnectionManager()
+
+async def log_to_terminal(text: str, type: str = "info"):
+    await manager.broadcast({"type": type, "text": text})
+
+@app.post("/api/spirit/log")
+async def spirit_log(req: Dict):
+    text = req.get("text", "")
+    type = req.get("type", "info")
+    await log_to_terminal(f"Spirit: {text}", type)
+    return {"status": "ok"}
 
 @app.get("/")
 def health_check():
@@ -581,18 +611,15 @@ async def disconnect_channel(clerk_id: str, platform: str, account_type: str):
 # ── Agent WebSocket (Terminal Streaming) ───────────────────────────────────────
 @app.websocket("/api/agent/stream")
 async def agent_stream(websocket: WebSocket):
-    await websocket.accept()
+    await manager.connect(websocket)
     print("Agent WebSocket connected.")
     try:
         while True:
-            # Wait for user input from the frontend
             data = await websocket.receive_text()
             print(f"Agent received task: {data}")
-            
-            # Use the new agent logic to plan and stream execution
             await stream_agent_logic(data, websocket)
-                
     except WebSocketDisconnect:
+        manager.disconnect(websocket)
         print("Agent WebSocket disconnected.")
     except Exception as e:
         print(f"WebSocket error: {e}")

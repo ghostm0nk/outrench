@@ -1,13 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <style>
     body {
       width: 320px;
       padding: 16px;
       background: #0f0c08;
       color: #fff;
-      font-family: -apple-system, sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
       margin: 0;
     }
     .header {
@@ -27,107 +28,113 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 8px;
     }
     .status-dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
       background: #ef4444;
+      display: inline-block;
+      margin-right: 6px;
     }
-    .status-dot.active { background: #10b981; }
-    .label { color: rgba(255,255,255,0.5); font-size: 11px; text-transform: uppercase; }
-    .value { font-size: 13px; font-weight: 600; }
+    .status-dot.active { background: #10b981; box-shadow: 0 0 8px #10b981; }
+    .label { color: rgba(255,255,255,0.5); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .value { font-size: 13px; font-weight: 700; }
     
     .profile-preview {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-top: 10px;
-      padding-top: 10px;
+      margin-top: 12px;
+      padding-top: 12px;
       border-top: 1px solid rgba(255,255,255,0.1);
     }
     .profile-preview img {
-      width: 32px;
-      height: 32px;
+      width: 36px;
+      height: 36px;
       border-radius: 50%;
+      border: 1px solid #f59e0b;
     }
 
     button {
       width: 100%;
-      padding: 10px;
+      padding: 12px;
       border: none;
       border-radius: 8px;
-      font-weight: 700;
+      font-weight: 800;
       cursor: pointer;
       transition: all 0.2s;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
+      text-transform: uppercase;
+      font-size: 11px;
     }
-    .btn-sync {
+    .btn-scout {
       background: #f59e0b;
       color: #000;
       margin-top: 10px;
+      box-shadow: 0 4px 14px rgba(245, 158, 11, 0.3);
     }
-    .btn-sync:hover { background: #fbbf24; }
-    .btn-sync:disabled { background: #4b3f2f; color: #888; cursor: not-allowed; }
+    .btn-scout:hover { background: #fbbf24; transform: translateY(-1px); }
 
-    .footer {
-      font-size: 10px;
-      color: rgba(255,255,255,0.3);
-      text-align: center;
-      margin-top: 16px;
-    }
     #spirit-log {
-      font-family: monospace;
+      font-family: ui-monospace, 'Cascadia Code', monospace;
       font-size: 10px;
       color: #fbbf24;
-      background: rgba(0,0,0,0.3);
-      padding: 8px;
-      border-radius: 6px;
-      height: 40px;
+      background: rgba(0,0,0,0.4);
+      padding: 10px;
+      border-radius: 8px;
+      height: 50px;
       overflow-y: auto;
-      margin-top: 10px;
-      border: 1px solid rgba(251, 191, 36, 0.2);
+      margin-top: 12px;
+      border: 1px solid rgba(251, 191, 36, 0.1);
+      line-height: 1.4;
+    }
+    .footer {
+      font-size: 9px;
+      color: rgba(255,255,255,0.2);
+      text-align: center;
+      margin-top: 16px;
+      letter-spacing: 1px;
     }
   </style>
 </head>
 <body>
   <div class="header">
-    <div style="font-size: 20px;">🕵️‍♂️</div>
-    <div style="font-weight: 800; font-size: 16px; color: #f59e0b;">GHOST DRIVER</div>
+    <div style="font-weight: 900; font-size: 18px; color: #f59e0b; letter-spacing: -0.5px;">GHOST DRIVER</div>
+    <div style="font-size: 10px; background: #f59e0b; color: #000; padding: 2px 6px; border-radius: 4px; font-weight: 900;">V1.3</div>
   </div>
 
   <div class="status-card">
     <div class="status-item">
-      <span class="label">Twitter Session</span>
-      <div style="display: flex; items: center; gap: 6px;">
+      <span class="label">X SESSION</span>
+      <div>
         <span id="session-dot" class="status-dot"></span>
-        <span id="session-text" class="value">Not Found</span>
+        <span id="session-text" class="value">CONNECTING...</span>
       </div>
     </div>
     
     <div id="profile-area" class="profile-preview" style="display: none;">
       <img id="profile-img" src="" alt="">
-      <div style="display: flex; flexDirection: column;">
+      <div style="display: flex; flex-direction: column;">
         <span id="profile-name" class="value"></span>
-        <span id="profile-handle" style="font-size: 11px; color: #f59e0b;"></span>
+        <span id="profile-handle" style="font-size: 11px; color: #f59e0b; font-weight: 600;"></span>
       </div>
     </div>
   </div>
 
-  <button id="btn-scout" class="btn-sync">
-    <span>✨</span> Initiate Market Scout
+  <button id="btn-scout" class="btn-scout">
+    START MARKET SEARCH
   </button>
 
   <div id="spirit-log">
-    Spirit: Ready to hunt...
+    Initializing Spirit link...
   </div>
 
   <div class="footer">
-    Outrench Ghost Driver v1.2 — Bridge Active
+    OUTRENCH AI // SECURE BRIDGE ACTIVE
   </div>
 
   <script src="popup.js"></script>
