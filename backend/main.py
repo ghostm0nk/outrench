@@ -524,6 +524,24 @@ async def get_market_leads(clerk_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/content/queue/{clerk_id}")
+async def get_content_queue(clerk_id: str):
+    if not supabase: raise HTTPException(status_code=500, detail="Database error")
+    try:
+        res = supabase.table("content_queue").select("*").eq("clerk_id", clerk_id).order("created_at", desc=True).limit(20).execute()
+        return {"queue": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/growth/trends/{clerk_id}")
+async def get_growth_trends(clerk_id: str):
+    if not supabase: raise HTTPException(status_code=500, detail="Database error")
+    try:
+        res = supabase.table("growth_trends").select("*").eq("clerk_id", clerk_id).order("created_at", desc=True).limit(20).execute()
+        return {"trends": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/channels/status/{clerk_id}")
 async def get_channel_status(clerk_id: str):
     if not supabase:

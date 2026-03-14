@@ -39,6 +39,8 @@ export default function Channels() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDriverActive, setIsDriverActive] = useState(false);
   const [marketLeads, setMarketLeads] = useState([]);
+  const [contentQueue, setContentQueue] = useState([]);
+  const [growthTrends, setGrowthTrends] = useState([]);
   const [isScouting, setIsScouting] = useState(false);
 
   // Check for Extension presence & Listen for data
@@ -69,7 +71,7 @@ export default function Channels() {
       if (event.data.type === "SCOUT_STATUS") {
         if (event.data.status === "finished") {
           setIsScouting(false);
-          fetchLeads();
+          fetchAllData();
         }
       }
     };
@@ -95,14 +97,29 @@ export default function Channels() {
       .finally(() => setIsLoading(false));
   }, [user]);
 
-  const fetchLeads = async () => {
+  const fetchAllData = async () => {
     if (!user) return;
     try {
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/market/leads/${user.id}`);
-      const data = await resp.json();
-      if (data.leads) setMarketLeads(data.leads);
+      const [leadsRes, queueRes, trendsRes] = await Promise.all([
+        fetch(`${import.meta.env.VITE_API_URL}/api/market/leads/${user.id}`),
+        fetch(`${import.meta.env.VITE_API_URL}/api/content/queue/${user.id}`),
+        fetch(`${import.meta.env.VITE_API_URL}/api/growth/trends/${user.id}`)
+      ]);
+
+      if (leadsRes.ok) {
+        const d = await leadsRes.json();
+        if (d.leads) setMarketLeads(d.leads);
+      }
+      if (queueRes.ok) {
+        const d = await queueRes.json();
+        if (d.queue) setContentQueue(d.queue);
+      }
+      if (trendsRes.ok) {
+        const d = await trendsRes.json();
+        if (d.trends) setGrowthTrends(d.trends);
+      }
     } catch (err) {
-      console.error("Failed to fetch leads", err);
+      console.error("Failed to fetch channel data", err);
     }
   };
 
@@ -111,7 +128,7 @@ export default function Channels() {
   const authToken = tokens[connectionKey] || '';
 
   useEffect(() => {
-    if (isConnected) fetchLeads();
+    if (isConnected) fetchAllData();
   }, [isConnected]);
 
   const initiateScout = () => {
@@ -506,19 +523,44 @@ export default function Channels() {
               <div style={{ padding: '16px 20px', background: 'rgba(245,158,11,0.05)', borderBottom: '1px solid rgba(245,158,11,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Zap size={16} style={{ color: '#f59e0b' }} />
                 <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0, color: '#fff' }}>Content Queue</h3>
-                <span style={{ fontSize: 11, color: '#fbbf24', marginLeft: 'auto' }}>0 Drafts</span>
+                <span style={{ fontSize: 11, color: '#fbbf24', marginLeft: 'auto' }}>{contentQueue.length} Drafts</span>
               </div>
 
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center' }}>
-                <MessageSquare size={32} style={{ color: 'rgba(245,158,11,0.2)', marginBottom: 16 }} />
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>Waiting for Inspiration</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 8, lineHeight: 1.5, maxWidth: 200 }}>
-                  Drafts will appear here once Spirit finds an angle worth posting about.
-                </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px', gap: '10px', overflowY: 'auto' }}>
+                {contentQueue.length === 0 ? (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', opacity: 0.5 }}>
+                    <MessageSquare size={32} style={{ color: 'rgba(245,158,11,0.2)', marginBottom: 16 }} />
+                    <div style={{ fontSize: 13, color: '#fff', fontWeight: 600 }}>Waiting for Inspiration</div>
+                    <div style={{ fontSize: 11, color: '#fff', marginTop: 8, maxWidth: 200 }}>
+                      Drafts will appear here once Spirit finds an angle worth posting about.
+                    </div>
+                  </div>
+                ) : (
+                  contentQueue.map(item => (
+                    <div key={item.id} style={{
+                      background: 'rgba(245,158,11,0.03)',
+                      border: '1px solid rgba(245,158,11,0.1)',
+                      borderRadius: 12,
+                      padding: '12px',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: 10, color: '#fbbf24', fontFamily: '"PPSupplyMono", monospace', textTransform: 'uppercase' }}>
+                        <span>{item.platform}</span> • <span>{item.account_type}</span>
+                      </div>
+                      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: '0 0 10px 0', lineHeight: 1.5 }}>
+                        {item.content}
+                      </p>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button style={{ flex: 1, background: 'rgba(245,158,11,0.1)', border: 'none', color: '#f59e0b', padding: '6px 0', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                          Edit & Post
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
-            {/* COLUMN 3: Growth Targets */}
+            {/* COLUMN 3: Growth Trends */}
             <div style={{
               flex: 1,
               display: 'flex',
@@ -530,19 +572,40 @@ export default function Channels() {
               position: 'relative',
             }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <UserPlus size={16} style={{ color: '#10b981' }} />
-                <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0, color: '#fff' }}>Growth Targets</h3>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginLeft: 'auto' }}>Awaiting Sync</span>
+                <TrendingUp size={16} style={{ color: '#10b981' }} />
+                <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0, color: '#fff' }}>Growth Trends</h3>
+                <span style={{ fontSize: 11, color: '#10b981', marginLeft: 'auto' }}>{growthTrends.length} Active</span>
               </div>
 
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20, textAlign: 'center' }}>
-                <TrendingUp size={32} style={{ color: 'rgba(16,185,129,0.2)', marginBottom: 16 }} />
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>Identifying Key Accounts</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 8, lineHeight: 1.5, maxWidth: 200 }}>
-                  Spirit is looking for high-value accounts you should interact with to boost visibility.
-                </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px', gap: '10px', overflowY: 'auto' }}>
+                {growthTrends.length === 0 ? (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', opacity: 0.5 }}>
+                    <TrendingUp size={32} style={{ color: 'rgba(16,185,129,0.2)', marginBottom: 16 }} />
+                    <div style={{ fontSize: 13, color: '#fff', fontWeight: 600 }}>Identifying Trending Topics</div>
+                    <div style={{ fontSize: 11, color: '#fff', marginTop: 8, maxWidth: 200 }}>
+                      Spirit tracks high-value keywords related to your niche.
+                    </div>
+                  </div>
+                ) : (
+                  growthTrends.map(trend => (
+                    <div key={trend.id} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      borderRadius: 12,
+                      padding: '12px 16px',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px rgba(16,185,129,0.5)' }} />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{trend.keyword}</span>
+                      </div>
+                      <span style={{ fontSize: 10, fontFamily: '"PPSupplyMono", monospace', color: 'rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: 4 }}>
+                        {trend.volume} Vol
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
-
             </div>
           </>
         )}
