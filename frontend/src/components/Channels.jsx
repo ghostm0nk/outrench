@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useUser } from '@clerk/clerk-react';
 import { 
   Twitter, 
@@ -12,178 +12,139 @@ import {
   RefreshCw,
   Search,
   Eye,
-  MessageSquare
+  MessageSquare,
+  Globe,
+  Database,
+  BarChart2,
+  ListTodo,
+  Flame,
+  ArrowRight,
+  ShieldCheck,
+  Layout,
+  Activity
 } from 'lucide-react';
 
-// ── Mock Data ────────────────────────────────────────────────────────────────
-const PLATFORMS = [
-  { id: 'twitter', label: 'Twitter', icon: Twitter, color: '#1DA1F2' },
-  { id: 'tiktok', label: 'TikTok', icon: Video, color: '#ff0050' },
+const SOURCES = [
+  { id: 'all', label: 'Intelligence Feed', icon: Activity, color: '#818cf8', description: 'Consolidated view of all AI findings' },
+  { id: 'google', label: 'Google Search', icon: Globe, color: '#4285F4', description: 'Broad search insights and market leads' },
+  { id: 'twitter', label: 'X / Twitter', icon: Twitter, color: '#1DA1F2', description: 'Social signals and direct outreach' },
+  { id: 'tiktok', label: 'TikTok', icon: Video, color: '#ff0050', description: 'Viral trends and video strategy' },
 ];
 
-const ACCOUNTS = [
-  { id: 'personal', label: 'Personal', handle: '@jubay', badge: '#f59e0b' },
-  { id: 'product', label: 'Product', handle: '@outrench', badge: '#10b981' },
-];
-
-// ── Channels Main Component ──────────────────────────────────────────────────
 export default function Channels() {
   const { user } = useUser();
-  const [activePlatform, setActivePlatform] = useState('twitter');
-  const [activeAccount, setActiveAccount] = useState('personal');
-  const [isAuto, setIsAuto] = useState(false);
-  const [connections, setConnections] = useState({}); // e.g. { 'twitter_personal': true }
-  const [tokens, setTokens] = useState({}); // e.g. { 'twitter_personal': 'token_value' }
-  const [error, setError] = useState('');
+  const [activeSource, setActiveSource] = useState('all');
   const [isLoading, setIsLoading] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  
+  // Data state
+  const [leads, setLeads] = useState([]);
+  const [queue, setQueue] = useState([]);
+  const [trends, setTrends] = useState([]);
+  const [connections, setConnections] = useState({});
   const [isDriverActive, setIsDriverActive] = useState(false);
-  const [marketLeads, setMarketLeads] = useState([]);
-  const [contentQueue, setContentQueue] = useState([]);
-  const [growthTrends, setGrowthTrends] = useState([]);
-  const [isScouting, setIsScouting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  // Check for Extension presence & Listen for data
+  const fetchAllData = useCallback(async () => {
+    if (!user) return;
+    setIsRefreshing(true);
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL;
+      const [leadsRes, queueRes, trendsRes, statusRes] = await Promise.all([
+        fetch(`${baseUrl}/api/market/leads/${user.id}`).then(r => r.json()),
+        fetch(`${baseUrl}/api/content/queue/${user.id}`).then(r => r.json()),
+        fetch(`${baseUrl}/api/growth/trends/${user.id}`).then(r => r.json()),
+        fetch(`${baseUrl}/api/channels/status/${user.id}`).then(r => r.json())
+      ]);
+
+      if (leadsRes.leads) setLeads(leadsRes.leads);
+      if (queueRes.queue) setQueue(queueRes.queue);
+      if (trendsRes.trends) setTrends(trendsRes.trends);
+      if (statusRes.connections) setConnections(statusRes.connections);
+    } catch (err) {
+      console.error("Failed to fetch intelligence data", err);
+      setError("Network error: Spirit could not reach the database.");
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchAllData();
+  }, [fetchAllData]);
+
+  // Extension status checking & Sync listeners
   useEffect(() => {
     const checkDriver = () => {
-      // Check for either the window variable or the DOM attribute
       const hasAttr = document.documentElement.getAttribute('data-ghost-driver') === 'active';
-      if (window.__GHOST_DRIVER__ || hasAttr) {
-        setIsDriverActive(true);
-      }
+      if (window.__GHOST_DRIVER__ || hasAttr) setIsDriverActive(true);
     };
-    const timer = setInterval(checkDriver, 1000);
+    const timer = setInterval(checkDriver, 2000);
 
     const handleMessage = (event) => {
       if (event.data.type === "SYNC_COMPLETE") {
-        const key = `${event.data.platform}_${event.data.account_type}`;
-        setConnections(prev => ({ ...prev, [key]: event.data.profile || true }));
+        fetchAllData();
         setIsSyncing(false);
       }
-      if (event.data.type === "SYNC_ERROR") {
-        setError(event.data.error);
+      if (event.data.type === "SYNC_ERROR" || event.data.type === "SESSION_NOT_FOUND") {
+        setError(event.data.error || "Ghost Driver sync failed.");
         setIsSyncing(false);
-      }
-      if (event.data.type === "SESSION_NOT_FOUND") {
-        setError(event.data.error);
-        setIsSyncing(false);
-      }
-      if (event.data.type === "SCOUT_STATUS") {
-        if (event.data.status === "finished") {
-          setIsScouting(false);
-          fetchAllData();
-        }
       }
     };
-
     window.addEventListener("message", handleMessage);
 
     return () => {
       clearInterval(timer);
       window.removeEventListener("message", handleMessage);
     };
-  }, [user, activePlatform, activeAccount]);
+  }, [fetchAllData]);
 
-  useEffect(() => {
-    if (!user) return;
-    
-    fetch(`${import.meta.env.VITE_API_URL}/api/channels/status/${user.id}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.connections) setConnections(data.connections);
-        if (data.tokens) setTokens(data.tokens);
-      })
-      .catch(err => console.error("Error fetching channels status:", err))
-      .finally(() => setIsLoading(false));
-  }, [user]);
-
-  const fetchAllData = async () => {
-    if (!user) return;
-    try {
-      const [leadsRes, queueRes, trendsRes] = await Promise.all([
-        fetch(`${import.meta.env.VITE_API_URL}/api/market/leads/${user.id}`),
-        fetch(`${import.meta.env.VITE_API_URL}/api/content/queue/${user.id}`),
-        fetch(`${import.meta.env.VITE_API_URL}/api/growth/trends/${user.id}`)
-      ]);
-
-      if (leadsRes.ok) {
-        const d = await leadsRes.json();
-        if (d.leads) setMarketLeads(d.leads);
-      }
-      if (queueRes.ok) {
-        const d = await queueRes.json();
-        if (d.queue) setContentQueue(d.queue);
-      }
-      if (trendsRes.ok) {
-        const d = await trendsRes.json();
-        if (d.trends) setGrowthTrends(d.trends);
-      }
-    } catch (err) {
-      console.error("Failed to fetch channel data", err);
-    }
-  };
-
-  const connectionKey = `${activePlatform}_${activeAccount}`;
-  const isConnected = !!connections[connectionKey];
-  const authToken = tokens[connectionKey] || '';
-
-  useEffect(() => {
-    if (isConnected) fetchAllData();
-  }, [isConnected]);
-
-  const initiateScout = () => {
-    if (!user) return;
-    setIsScouting(true);
-    window.postMessage({ type: "START_MARKET_SCOUT", clerk_id: user.id }, "*");
-    // Safety timeout
-    setTimeout(() => setIsScouting(false), 30000);
-  };
-
-
-
-
-  const handleConnect = () => {
-    if (!user) return;
+  const handleSync = () => {
+    if (!user || activeSource === 'all') return;
     setError('');
     setIsSyncing(true);
-    // Tell the extension: "Sync THIS user for THIS platform"
     window.postMessage({ 
       type: "SYNC_PROFILE_REQUEST",
       clerk_id: user.id,
-      platform: activePlatform,
-      account_type: activeAccount
+      platform: activeSource,
+      account_type: 'personal' // Defaulting for simplicity in this view
     }, "*");
     
-    // Safety timeout
-    setTimeout(() => setIsSyncing(false), 8000);
+    setTimeout(() => setIsSyncing(false), 10000);
   };
 
-  const handleDisconnect = async () => {
+  const handleDisconnect = async (platform) => {
+    if (!confirm(`Disconnect ${platform}?`)) return;
     try {
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/channels/disconnect/${user.id}/${activePlatform}/${activeAccount}`, {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/channels/disconnect/${user.id}/${platform}/personal`, {
         method: 'DELETE',
       });
-      if (!resp.ok) throw new Error("Failed to disconnect");
-
-      setConnections(prev => {
-        const next = { ...prev };
-        delete next[connectionKey];
-        return next;
-      });
-      setTokens(prev => {
-        const next = { ...prev };
-        delete next[connectionKey];
-        return next;
-      });
+      if (resp.ok) fetchAllData();
     } catch (err) {
       console.error(err);
     }
   };
 
+  // Filter logic
+  const filteredLeads = activeSource === 'all' ? leads : leads.filter(l => l.platform?.toLowerCase() === activeSource);
+  const filteredQueue = activeSource === 'all' ? queue : queue.filter(q => q.platform?.toLowerCase() === activeSource);
+  const filteredTrends = activeSource === 'all' ? trends : trends.filter(t => t.platform?.toLowerCase() === activeSource);
+
+  // Connection helpers
+  const getSourceConnections = (source) => {
+    if (source === 'all') return Object.keys(connections).length;
+    return Object.keys(connections).filter(k => k.startsWith(source)).length;
+  };
+
   if (isLoading) {
     return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.5)' }}>
-        <RefreshCw size={24} className="spin-fast" />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+        <RefreshCw size={32} className="spin-fast" style={{ color: '#818cf8' }} />
+        <span style={{ fontSize: 12, fontFamily: '"PPSupplyMono", monospace', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em' }}>
+          Initializing Intelligence Hub...
+        </span>
       </div>
     );
   }
@@ -191,425 +152,401 @@ export default function Channels() {
   return (
     <div style={{
       display: 'flex',
-      flexDirection: 'column',
       height: '100%',
-      background: 'rgba(15, 12, 8, 0.6)',
-      backdropFilter: 'blur(20px)',
-      gap: 0,
-      animation: 'fadeUp 0.4s ease-out',
+      background: 'rgba(10, 10, 12, 0.4)',
+      backdropFilter: 'blur(30px)',
+      overflow: 'hidden',
     }}>
-      
-      {/* ── Top Bar: Platform & Account Select ── */}
+      {/* ── Sidebar: Data Sources ── */}
       <div style={{
+        width: 280,
+        borderRight: '1px solid rgba(255,255,255,0.06)',
         display: 'flex',
-        alignItems: 'center',
-        background: 'rgba(0,0,0,0.4)',
-        borderBottom: '1px solid rgba(245,158,11,0.1)',
-        padding: '0 20px',
-        height: 64,
+        flexDirection: 'column',
+        background: 'rgba(0,0,0,0.2)',
         flexShrink: 0,
       }}>
-        {/* Platforms */}
-        <div style={{ display: 'flex', gap: 12, marginRight: 32 }}>
-          {PLATFORMS.map(p => {
-            const Icon = p.icon;
-            const isActive = activePlatform === p.id;
+        <div style={{ padding: '24px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Layout size={18} style={{ color: '#818cf8' }} />
+          <h1 style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.02em', margin: 0 }}>Intelligence</h1>
+        </div>
+
+        <div style={{ flex: 1, padding: '0 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {SOURCES.map(source => {
+            const Icon = source.icon;
+            const isActive = activeSource === source.id;
+            const connCount = getSourceConnections(source.id);
+            
             return (
               <button
-                key={p.id}
-                onClick={() => setActivePlatform(p.id)}
+                key={source.id}
+                onClick={() => setActiveSource(source.id)}
                 style={{
-                  background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent',
-                  border: `1px solid ${isActive ? 'rgba(255,255,255,0.1)' : 'transparent'}`,
-                  color: isActive ? p.color : 'rgba(255,255,255,0.4)',
-                  padding: '6px 14px',
-                  borderRadius: 99,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 8,
-                  transition: 'all 0.2s',
-                }}
-              >
-                <Icon size={16} />
-                {p.label}
-              </button>
-            );
-          })}
-        </div>
-        
-        <div style={{ width: 1, height: 24, background: 'rgba(255,255,255,0.08)', marginRight: 32 }} />
-
-        {/* Accounts */}
-        <div style={{ display: 'flex', gap: 12 }}>
-          {ACCOUNTS.map(acc => {
-            const isActive = activeAccount === acc.id;
-            // Get profile data if connected
-            const profile = connections[`${activePlatform}_${acc.id}`];
-            const isConn = !!profile;
-            const displayHandle = isConn && profile.handle ? profile.handle : acc.handle;
-            const displayAvatar = isConn && profile.avatar_url ? profile.avatar_url : null;
-
-            return (
-              <button
-                key={acc.id}
-                onClick={() => setActiveAccount(acc.id)}
-                style={{
-                  background: isActive ? 'rgba(245,158,11,0.08)' : 'transparent',
-                  border: `1px solid ${isActive ? 'rgba(245,158,11,0.2)' : 'transparent'}`,
+                  gap: 12,
+                  padding: '12px 14px',
+                  borderRadius: 12,
+                  border: '1px solid transparent',
+                  background: isActive ? 'rgba(129, 140, 248, 0.08)' : 'transparent',
+                  borderColor: isActive ? 'rgba(129, 140, 248, 0.15)' : 'transparent',
                   color: isActive ? '#fff' : 'rgba(255,255,255,0.5)',
-                  padding: '6px 14px',
-                  borderRadius: 8,
-                  fontSize: 13,
                   cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'flex-start',
-                  transition: 'all 0.2s',
+                  textAlign: 'left',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {displayAvatar ? (
-                    <img src={displayAvatar} alt="avatar" style={{ width: 14, height: 14, borderRadius: '50%', objectFit: 'cover' }} />
-                  ) : (
-                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: acc.badge }} />
-                  )}
-                  <span style={{ fontWeight: 600 }}>{acc.label}</span>
+                <div style={{
+                  width: 32, height: 32,
+                  borderRadius: 8,
+                  background: isActive ? source.color : 'rgba(255,255,255,0.03)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: isActive ? '#fff' : source.color,
+                  transition: 'all 0.2s',
+                }}>
+                  <Icon size={18} />
                 </div>
-                <span style={{ fontSize: 10, color: isActive ? '#fca5a5' : 'rgba(255,255,255,0.3)', fontFamily: '"PPSupplyMono", monospace' }}>
-                  {displayHandle}
-                </span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{source.label}</div>
+                  <div style={{ fontSize: 10, opacity: 0.6 }}>{connCount > 0 ? `${connCount} active channel` : 'Not connected'}</div>
+                </div>
+                {isActive && <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#818cf8' }} />}
               </button>
             );
           })}
         </div>
 
-        {/* Global Auto/Manual Toggle & Disconnect */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
-          {isConnected && (
-             <button 
-               onClick={handleDisconnect}
-               style={{
-                 background: 'rgba(239, 68, 68, 0.1)',
-                 border: '1px solid rgba(239, 68, 68, 0.2)',
-                 color: '#f87171',
-                 padding: '6px 14px',
-                 borderRadius: 99,
-                 fontSize: 12,
-                 fontWeight: 600,
-                 cursor: 'pointer',
-                 display: 'flex',
-                 alignItems: 'center',
-                 gap: 6,
-                 transition: 'all 0.2s',
-               }}
-               onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'; e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.4)'; }}
-               onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.2)'; }}
-             >
-               <XCircle size={14} /> Disconnect
-             </button>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 11, fontFamily: '"PPSupplyMono", monospace', color: isAuto ? '#f59e0b' : 'rgba(255,255,255,0.3)', textTransform: 'uppercase' }}>
-              {isAuto ? 'Spirit Autonomous' : 'Require Approval'}
+        {/* Sync Status Footer */}
+        <div style={{ padding: 20, borderTop: '1px solid rgba(255,255,255,0.05)', background: 'rgba(0,0,0,0.1)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: isDriverActive ? '#10b981' : '#f59e0b', boxShadow: isDriverActive ? '0 0 8px #10b981' : 'none' }} />
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.8)' }}>
+              Ghost Driver {isDriverActive ? 'Ready' : 'Standby'}
             </span>
-            <button 
-              onClick={() => setIsAuto(!isAuto)}
-              style={{
-                width: 44, height: 22,
-                borderRadius: 20,
-                background: isAuto ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.08)',
-                border: `1px solid ${isAuto ? '#f59e0b' : 'rgba(255,255,255,0.1)'}`,
-                position: 'relative',
-                cursor: 'pointer',
-                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                padding: 0,
-              }}
-            >
-              <div style={{
-                position: 'absolute',
-                top: 2, left: isAuto ? 24 : 2,
-                width: 16, height: 16,
-                borderRadius: '50%',
-                background: isAuto ? '#f59e0b' : 'rgba(255,255,255,0.3)',
-                boxShadow: isAuto ? '0 0 10px #f59e0b' : 'none',
-                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              }} />
-            </button>
           </div>
+          <button 
+            onClick={fetchAllData}
+            disabled={isRefreshing}
+            style={{
+              width: '100%',
+              padding: '10px',
+              borderRadius: 8,
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: 'rgba(255,255,255,0.7)',
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+            }}
+          >
+            <RefreshCw size={12} className={isRefreshing ? "spin-fast" : ""} />
+            Database Refresh
+          </button>
         </div>
       </div>
 
-      {/* ── Main View Area ── */}
+      {/* ── Main content: Intelligence Feed ── */}
       <div style={{
-        display: 'flex',
         flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
         overflow: 'hidden',
-        padding: 20,
-        gap: 20,
       }}>
-        {!isConnected ? (
-          // ── CONNECTION / GHOST DRIVER SETUP VIEW ──
-          <div style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            <div style={{
-              width: 500,
-              background: 'rgba(20,15,10,0.8)',
-              border: '1px solid rgba(245,158,11,0.2)',
-              borderRadius: 24,
-              padding: 40,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              textAlign: 'center',
-              boxShadow: '0 16px 40px rgba(0,0,0,0.5)',
-            }}>
-              <div style={{ 
-                width: 64, height: 64, 
-                borderRadius: '50%', 
-                background: 'rgba(245,158,11,0.1)', 
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                marginBottom: 24,
-                border: '1px solid rgba(245,158,11,0.2)',
-                position: 'relative'
-              }}>
-                <Zap size={32} style={{ color: '#f59e0b' }} />
-                {isDriverActive && (
-                  <div style={{ 
-                    position: 'absolute', top: -2, right: -2, 
-                    width: 14, height: 14, 
-                    borderRadius: '50%', 
-                    background: '#10b981', 
-                    border: '3px solid #14100c' 
-                  }} />
-                )}
-              </div>
-
-              <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 12px 0', color: '#fff' }}>
-                {isDriverActive ? 'Ghost Driver Active' : 'Ghost Driver Missing'}
-              </h2>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', maxWidth: 400, margin: '0 0 32px 0', lineHeight: 1.6 }}>
-                {isDriverActive 
-                  ? "Your Ghost Driver is connected. Spirit can now securely use your browser to manage your growth strategy."
-                  : "To bypass Twitter limits and $100/mo costs, we use the Ghost Driver. It acts as Spirit's physical hands on the web."}
-              </p>
-
-              {!isDriverActive ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: '100%' }}>
+        {/* Feed Header */}
+        <div style={{
+          padding: '24px 32px',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 4px 0' }}>{SOURCES.find(s => s.id === activeSource)?.label}</h2>
+            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', margin: 0 }}>
+              {SOURCES.find(s => s.id === activeSource)?.description}
+            </p>
+          </div>
+          
+          <div style={{ display: 'flex', gap: 12 }}>
+            {activeSource !== 'all' && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                {getSourceConnections(activeSource) > 0 ? (
                   <button 
-                    onClick={() => window.open('https://github.com/ghostm0nk/outrench-extension', '_blank')}
-                    style={{ 
-                      background: 'rgba(255,255,255,0.05)', 
-                      border: '1px solid rgba(255,255,255,0.1)', 
-                      color: '#fff', 
-                      padding: '12px 24px', 
-                      borderRadius: 12, 
-                      fontWeight: 600, 
-                      cursor: 'pointer',
-                      fontSize: 14,
-                      transition: 'all 0.2s',
+                    onClick={() => handleDisconnect(activeSource)}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 10,
+                      background: 'rgba(239,68,68,0.05)',
+                      border: '1px solid rgba(239,68,68,0.1)',
+                      color: '#f87171',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer'
                     }}
-                    onMouseOver={(e) => e.target.style.background = 'rgba(255,255,255,0.08)'}
-                    onMouseOut={(e) => e.target.style.background = 'rgba(255,255,255,0.05)'}
                   >
-                    Step 1: Get Ghost Driver Folder
+                    Disconnect
                   </button>
-                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', margin: 0 }}>
-                    Then visit <span style={{ color: '#f59e0b' }}>chrome://extensions</span> and drag the folder in.
-                  </p>
-                </div>
-              ) : (
+                ) : null}
+                
                 <button 
-                  onClick={handleConnect}
-                  disabled={isSyncing}
-                  style={{ 
-                    width: '100%',
-                    background: isSyncing ? 'rgba(255,255,255,0.05)' : 'linear-gradient(135deg, #f59e0b, #ea580c)', 
-                    border: 'none', 
-                    color: isSyncing ? 'rgba(255,255,255,0.3)' : '#fff', 
-                    padding: '14px 32px', 
-                    borderRadius: 12, 
-                    fontWeight: 700, 
-                    cursor: isSyncing ? 'not-allowed' : 'pointer',
-                    fontSize: 16,
-                    boxShadow: isSyncing ? 'none' : '0 4px 20px rgba(245,158,11,0.3)',
-                    transition: 'all 0.2s',
+                  onClick={handleSync}
+                  disabled={isSyncing || !isDriverActive}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 10,
+                    background: isSyncing ? 'rgba(255,255,255,0.05)' : 'linear-gradient(135deg, #818cf8, #6366f1)',
+                    border: 'none',
+                    color: '#fff',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: (isSyncing || !isDriverActive) ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 10
+                    gap: 8,
+                    boxShadow: isSyncing ? 'none' : '0 4px 12px rgba(129,140,248,0.3)'
                   }}
-                  onMouseOver={(e) => !isSyncing && (e.target.style.transform = 'scale(1.02)')}
-                  onMouseOut={(e) => !isSyncing && (e.target.style.transform = 'scale(1)')}
                 >
-                  {isSyncing ? (
-                    <>
-                      <RefreshCw size={18} className="spin-fast" /> Connecting...
-                    </>
-                  ) : 'Awaken & Sync Spirit'}
+                  {isSyncing ? <RefreshCw size={14} className="spin-fast" /> : <Zap size={14} />}
+                  {isSyncing ? 'Syncing...' : 'Sync Platform'}
                 </button>
-              )}
+              </div>
+            )}
 
-              {error && <div style={{ marginTop: 20, color: '#ef4444', fontSize: 13, background: 'rgba(239, 68, 68, 0.1)', padding: '8px 16px', borderRadius: 8 }}>{error}</div>}
+            <div style={{ width: 1, background: 'rgba(255,255,255,0.05)', margin: '0 8px' }} />
+
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 10, fontFamily: '"PPSupplyMono", monospace', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase' }}>Session Health</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>Optimized</div>
             </div>
           </div>
-        ) : (
-          // ── ACTUAL 3-COLUMN CONTROL BOARD (Shown when Connected) ──
-          <>
-            {/* COLUMN 1: Market Scout */}
-            <div style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              borderRadius: 20,
-              overflow: 'hidden',
-            }}>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px', gap: '10px', overflowY: 'auto' }}>
-                {marketLeads.length === 0 ? (
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', opacity: 0.5 }}>
-                    <Search size={32} style={{ marginBottom: 16 }} />
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>No Signals Found Yet</div>
-                    <div style={{ fontSize: 11, marginTop: 8, maxWidth: 180 }}>Spirit is scouting the digital realm for trending pain points.</div>
-                  </div>
-                ) : (
-                  <>
-                    {marketLeads.map(lead => (
-                      <div key={lead.id} style={{ 
-                        background: 'rgba(255,255,255,0.03)', 
-                        border: '1px solid rgba(255,255,255,0.06)', 
-                        borderRadius: 12, 
-                        padding: '12px' 
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                          <img src={lead.avatar_url || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png'} style={{ width: 24, height: 24, borderRadius: '50%' }} alt="" />
-                          <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: '#fff' }}>{lead.name}</span>
-                            <span style={{ fontSize: 10, color: '#fbbf24' }}>{lead.handle}</span>
-                          </div>
-                        </div>
-                        <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', margin: '0 0 8px 0', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                          {lead.content}
-                        </p>
-                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: 4 }}>
-                          Reason: {lead.reason}
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                )}
-              </div>
+        </div>
+
+        {/* Scrollable Feed */}
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '24px 32px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 32,
+        }}>
+          {error && (
+             <div style={{ padding: '16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 12, color: '#f87171', fontSize: 13 }}>
+                {error}
+             </div>
+          )}
+
+          {/* ── Section: Market Leads (Scouted Users) ── */}
+          <section>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <UserPlus size={16} style={{ color: '#818cf8' }} />
+              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0, opacity: 0.6 }}>Market Leads</h3>
+              <div style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(129,140,248,0.1)', color: '#818cf8', fontSize: 10, fontWeight: 700 }}>{filteredLeads.length}</div>
             </div>
 
-            {/* COLUMN 2: Content Queue */}
             <div style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'rgba(0,0,0,0.4)',
-              border: '1px solid rgba(245,158,11,0.15)',
-              borderRadius: 20,
-              overflow: 'hidden',
-              boxShadow: '0 8px 32px rgba(245,158,11,0.05)',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+              gap: 16,
             }}>
-              <div style={{ padding: '16px 20px', background: 'rgba(245,158,11,0.05)', borderBottom: '1px solid rgba(245,158,11,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Zap size={16} style={{ color: '#f59e0b' }} />
-                <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0, color: '#fff' }}>Content Queue</h3>
-                <span style={{ fontSize: 11, color: '#fbbf24', marginLeft: 'auto' }}>{contentQueue.length} Drafts</span>
-              </div>
+              {filteredLeads.length === 0 ? (
+                <EmptyState icon={UserPlus} text="No scouted leads in this sector." />
+              ) : (
+                filteredLeads.map(lead => <LeadCard key={lead.id} lead={lead} />)
+              )}
+            </div>
+          </section>
 
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px', gap: '10px', overflowY: 'auto' }}>
-                {contentQueue.length === 0 ? (
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', opacity: 0.5 }}>
-                    <MessageSquare size={32} style={{ color: 'rgba(245,158,11,0.2)', marginBottom: 16 }} />
-                    <div style={{ fontSize: 13, color: '#fff', fontWeight: 600 }}>Waiting for Inspiration</div>
-                    <div style={{ fontSize: 11, color: '#fff', marginTop: 8, maxWidth: 200 }}>
-                      Drafts will appear here once Spirit finds an angle worth posting about.
-                    </div>
-                  </div>
-                ) : (
-                  contentQueue.map(item => (
-                    <div key={item.id} style={{
-                      background: 'rgba(245,158,11,0.03)',
-                      border: '1px solid rgba(245,158,11,0.1)',
-                      borderRadius: 12,
-                      padding: '12px',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: 10, color: '#fbbf24', fontFamily: '"PPSupplyMono", monospace', textTransform: 'uppercase' }}>
-                        <span>{item.platform}</span> • <span>{item.account_type}</span>
-                      </div>
-                      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', margin: '0 0 10px 0', lineHeight: 1.5 }}>
-                        {item.content}
-                      </p>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button style={{ flex: 1, background: 'rgba(245,158,11,0.1)', border: 'none', color: '#f59e0b', padding: '6px 0', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
-                          Edit & Post
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
+          {/* ── Section: Content Queue (AI Drafts) ── */}
+          <section>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <MessageSquare size={16} style={{ color: '#fbbf24' }} />
+              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0, opacity: 0.6 }}>Strategic Drafts</h3>
+              <div style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(251,191,36,0.1)', color: '#fbbf24', fontSize: 10, fontWeight: 700 }}>{filteredQueue.length}</div>
             </div>
 
-            {/* COLUMN 3: Growth Trends */}
             <div style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              borderRadius: 20,
-              overflow: 'hidden',
-              position: 'relative',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+              gap: 16,
             }}>
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <TrendingUp size={16} style={{ color: '#10b981' }} />
-                <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0, color: '#fff' }}>Growth Trends</h3>
-                <span style={{ fontSize: 11, color: '#10b981', marginLeft: 'auto' }}>{growthTrends.length} Active</span>
-              </div>
-
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '12px', gap: '10px', overflowY: 'auto' }}>
-                {growthTrends.length === 0 ? (
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', opacity: 0.5 }}>
-                    <TrendingUp size={32} style={{ color: 'rgba(16,185,129,0.2)', marginBottom: 16 }} />
-                    <div style={{ fontSize: 13, color: '#fff', fontWeight: 600 }}>Identifying Trending Topics</div>
-                    <div style={{ fontSize: 11, color: '#fff', marginTop: 8, maxWidth: 200 }}>
-                      Spirit tracks high-value keywords related to your niche.
-                    </div>
-                  </div>
-                ) : (
-                  growthTrends.map(trend => (
-                    <div key={trend.id} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.06)',
-                      borderRadius: 12,
-                      padding: '12px 16px',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px rgba(16,185,129,0.5)' }} />
-                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{trend.keyword}</span>
-                      </div>
-                      <span style={{ fontSize: 10, fontFamily: '"PPSupplyMono", monospace', color: 'rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: 4 }}>
-                        {trend.volume} Vol
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
+              {filteredQueue.length === 0 ? (
+                <EmptyState icon={MessageSquare} text="Awaiting strategic content generation." />
+              ) : (
+                filteredQueue.map(item => <QueueCard key={item.id} item={item} />)
+              )}
             </div>
-          </>
-        )}
+          </section>
+
+          {/* ── Section: Growth Trends ── */}
+          <section style={{ marginBottom: 40 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <TrendingUp size={16} style={{ color: '#10b981' }} />
+              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0, opacity: 0.6 }}>Industry Trends</h3>
+              <div style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(16,185,129,0.1)', color: '#10b981', fontSize: 10, fontWeight: 700 }}>{filteredTrends.length}</div>
+            </div>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+              gap: 16,
+            }}>
+              {filteredTrends.length === 0 ? (
+                <EmptyState icon={TrendingUp} text="Spirit is currently mapping market trends." />
+              ) : (
+                filteredTrends.map(trend => <TrendCard key={trend.id} trend={trend} />)
+              )}
+            </div>
+          </section>
+        </div>
       </div>
+    </div>
+  );
+}
+
+// ── Sub-Components ──
+
+function EmptyState({ icon: Icon, text }) {
+  return (
+    <div style={{
+      gridColumn: '1 / -1',
+      padding: '40px 20px',
+      border: '1px dashed rgba(255,255,255,0.06)',
+      borderRadius: 16,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+      color: 'rgba(255,255,255,0.2)',
+    }}>
+      <Icon size={24} strokeWidth={1.5} />
+      <span style={{ fontSize: 12 }}>{text}</span>
+    </div>
+  );
+}
+
+function LeadCard({ lead }) {
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.02)',
+      border: '1px solid rgba(255,255,255,0.05)',
+      borderRadius: 16,
+      padding: 16,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <img 
+          src={lead.avatar_url || 'https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png'} 
+          style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.1)' }} 
+        />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{lead.name}</div>
+          <div style={{ fontSize: 11, color: '#818cf8', fontWeight: 500 }}>{lead.handle}</div>
+        </div>
+        <div style={{
+          padding: '2px 6px',
+          background: 'rgba(129, 140, 248, 0.1)',
+          borderRadius: 4,
+          fontSize: 9,
+          fontFamily: '"PPSupplyMono", monospace',
+          color: '#818cf8',
+          textTransform: 'uppercase'
+        }}>
+          {lead.platform}
+        </div>
+      </div>
+      
+      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', lineHeight: 1.5, margin: 0 }}>
+        {lead.content}
+      </p>
+
+      <div style={{
+        marginTop: 'auto',
+        display: 'flex',
+        alignItems: 'center',
+        background: 'rgba(0,0,0,0.2)',
+        padding: '8px 10px',
+        borderRadius: 8,
+        gap: 6,
+      }}>
+        <Search size={10} style={{ color: 'rgba(255,255,255,0.3)' }} />
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {lead.reason}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function QueueCard({ item }) {
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.02)',
+      border: '1px solid rgba(255,255,255,0.05)',
+      borderRadius: 16,
+      padding: 20,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 14,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 24, height: 24, borderRadius: 6, background: 'rgba(251,191,36,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fbbf24' }}>
+          <Zap size={14} />
+        </div>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          AI Generated Hook
+        </span>
+      </div>
+
+      <p style={{ fontSize: 13, color: '#fff', lineHeight: 1.6, margin: 0, fontStyle: 'italic' }}>
+        "{item.content}"
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto' }}>
+        <div style={{ display: 'flex', gap: 4 }}>
+           <div style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.1)', fontSize: 9, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
+            {item.platform}
+          </div>
+          <div style={{ padding: '2px 8px', borderRadius: 4, background: 'rgba(251,191,36,0.1)', color: '#fbbf24', fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>
+            Draft
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrendCard({ trend }) {
+  return (
+    <div style={{
+      background: 'rgba(16,185,129,0.03)',
+      border: '1px solid rgba(16,185,129,0.1)',
+      borderRadius: 16,
+      padding: '16px 20px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 16,
+    }}>
+      <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
+        <Flame size={20} />
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{trend.keyword}</div>
+        <div style={{ fontSize: 10, color: '#10b981', fontFamily: '"PPSupplyMono", monospace', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <TrendingUp size={10} />
+          {trend.volume || 'Rising'}
+        </div>
+      </div>
+      <ArrowRight size={14} style={{ opacity: 0.2 }} />
     </div>
   );
 }

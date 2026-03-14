@@ -78,12 +78,20 @@ class SupabaseRestWrapper:
                 return Req()
             def select(self, fields="*"):
                 class Req:
+                    def __init__(self):
+                        self.params = {"select": fields}
                     def eq(self, k, v):
-                        self.k, self.v = k, v
+                        self.params[k] = f"eq.{v}"
+                        return self
+                    def order(self, col, desc=False):
+                        self.params["order"] = f"{col}.{'desc' if desc else 'asc'}"
+                        return self
+                    def limit(self, count):
+                        self.params["limit"] = str(count)
                         return self
                     def execute(self):
                         with requests.Session() as c:
-                            r = c.get(f"{url}?select={fields}&{self.k}=eq.{self.v}", headers=headers)
+                            r = c.get(url, headers=headers, params=self.params)
                             r.raise_for_status()
                             class Res:
                                 data = r.json()
