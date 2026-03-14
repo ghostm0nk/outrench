@@ -101,15 +101,19 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
             startup_context = f"{s['name']}: {s['one_liner']}. Targeting: {s['target_audience']}"
 
     # 2. Spirit Acknowledgement
-    try:
-        ack_system = "You are Spirit. Acknowledge the user's scouting request in one short, mysterious, but helpful sentence."
-        acknowledgement = await get_ai_response(f"Acknowledge: {user_input}", ack_system)
-        
-        await websocket.send_json({"type": "ai_response", "text": acknowledgement})
-        await asyncio.sleep(0.8)
-    except:
-        await websocket.send_json({"type": "error", "text": "Spirit is having trouble manifesting thoughts (Groq Error). Check backend logs."})
+    ack_system = "You are Spirit. Acknowledge the user's scouting request in one short, mysterious, but helpful sentence."
+    acknowledgement = await get_ai_response(f"Acknowledge: {user_input}", ack_system)
+    
+    # Surface real errors to the terminal — no more silent failures
+    if acknowledgement.startswith("Error"):
+        await websocket.send_json({
+            "type": "error",
+            "text": f"Spirit could not connect to AI: {acknowledgement}"
+        })
         return
+    
+    await websocket.send_json({"type": "ai_response", "text": acknowledgement})
+    await asyncio.sleep(0.8)
 
     # 3. Planning
     await websocket.send_json({"type": "info", "text": "Spirit is expanding its vision to the global network..."})

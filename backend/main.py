@@ -209,6 +209,12 @@ def health_check():
     return {"status": "ok", "message": "Outrench API is running"}
 
 
+@app.get("/api/ping")
+def ping():
+    """Lightweight wake-up endpoint. Frontend pings this before opening WebSocket."""
+    return {"pong": True}
+
+
 @app.post("/api/generate")
 def generate_outreach(req: OutreachRequest):
     if not GROQ_API_KEY:

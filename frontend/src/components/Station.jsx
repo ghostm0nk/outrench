@@ -44,47 +44,112 @@ export default function Station() {
   const [sysDetail, setSysDetail] = useState('');
 
   const socketRef = useRef(null);
+  const retryTimerRef = useRef(null);
+  const retryCountRef = useRef(0);
+  const unmountedRef = useRef(false);
+  const connectRef = useRef(null); // ref to break circular dependency
+
+  const scheduleRetry = useCallback((shouldRetry) => {
+    if (!shouldRetry || unmountedRef.current) {
+      setSysStatus('warn');
+      setSysMessage('Disconnected');
+      return;
+    }
+
+    const delays = [2, 4, 8, 16, 30];
+    const delay = delays[Math.min(retryCountRef.current, delays.length - 1)];
+    retryCountRef.current += 1;
+
+    setSysStatus('warn');
+    setSysMessage(`Reconnecting in ${delay}s...`);
+
+    let remaining = delay;
+    clearInterval(retryTimerRef.current);
+    retryTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(retryTimerRef.current);
+        if (!unmountedRef.current) {
+          setSysMessage('Attempting reconnect...');
+          connectRef.current?.(); // call via ref — no circular dep
+        }
+      } else {
+        setSysMessage(`Reconnecting in ${remaining}s...`);
+      }
+    }, 1000);
+  }, []);
+
+  const connect = useCallback(() => {
+    if (unmountedRef.current) return;
+
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const wsUrl = apiUrl.replace(/^http/, 'ws') + '/api/agent/stream';
+
+    setSysStatus('warn');
+    setSysMessage('Waking Spirit...');
+    setSysDetail('');
+
+    // Step 1: Ping to wake the Render dyno before opening WebSocket
+    fetch(`${apiUrl}/api/ping`, { signal: AbortSignal.timeout(8000) })
+      .then(() => {
+        if (unmountedRef.current) return;
+        setSysMessage('Opening channel...');
+
+        // Step 2: Open WebSocket now that the dyno is awake
+        const socket = new WebSocket(wsUrl);
+        socketRef.current = socket;
+
+        socket.onopen = () => {
+          if (unmountedRef.current) { socket.close(); return; }
+          retryCountRef.current = 0;
+          setSysStatus('ok');
+          setSysMessage('Presence Active');
+          setSysDetail('');
+          pushLine('info', 'Spirit connection established.');
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type && data.text) pushLine(data.type, data.text);
+          } catch (err) {
+            console.error('WS parse error', err);
+          }
+        };
+
+        socket.onerror = () => {
+          // onerror always fires before onclose — let onclose handle retry
+        };
+
+        socket.onclose = (event) => {
+          if (unmountedRef.current) return;
+          scheduleRetry(event.code !== 1000);
+        };
+      })
+      .catch((err) => {
+        if (unmountedRef.current) return;
+        const msg = err?.name === 'TimeoutError'
+          ? 'Backend is taking too long to wake (>8s).'
+          : 'Cannot reach backend at configured URL.';
+        setSysDetail(`${msg} Retrying automatically.`);
+        scheduleRetry(true);
+      });
+  }, [pushLine, scheduleRetry]);
 
   useEffect(() => {
-    // Determine API URL
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-    const wsUrl = apiUrl.replace('http', 'ws') + '/api/agent/stream';
+    connectRef.current = connect; // keep ref in sync
+  }, [connect]);
 
-    const socket = new WebSocket(wsUrl);
-    socketRef.current = socket;
-
-    socket.onopen = () => {
-      setSysStatus('ok');
-      setSysMessage('Presence Active');
-      pushLine('info', 'Spirit connection established.');
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type && data.text) {
-          pushLine(data.type, data.text);
-        }
-      } catch (err) {
-        console.error('Failed to parse socket message', err);
-      }
-    };
-
-    socket.onerror = (error) => {
-      setSysStatus('error');
-      setSysMessage('Summoning Failed');
-      setSysDetail('Could not reach the spirit realm (backend).');
-    };
-
-    socket.onclose = () => {
-      setSysStatus('warn');
-      setSysMessage('Essence Departed');
-    };
+  useEffect(() => {
+    unmountedRef.current = false;
+    connect();
 
     return () => {
-      socket.close();
+      unmountedRef.current = true;
+      clearInterval(retryTimerRef.current);
+      socketRef.current?.close(1000, 'Component unmounted');
     };
-  }, [pushLine]);
+  }, []); // intentionally empty — connect() is stable via refs
 
   const handleSubmit = (e) => {
     e.preventDefault();
