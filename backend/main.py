@@ -1,18 +1,19 @@
 import json
 from typing import List, Dict, Optional
+import os
+from dotenv import load_dotenv
+
+# Load .env FIRST — before importing any local modules that read env vars at import time
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os
 import requests
-from dotenv import load_dotenv
 from svix.webhooks import Webhook, WebhookVerificationError
 from agent_logic import stream_agent_logic
 from twitter_api import verify_twitter_credentials
-
-# Initialize dotenv
-load_dotenv()
 
 app = FastAPI(title="Outrench AI Backend")
 
