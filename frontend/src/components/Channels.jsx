@@ -40,6 +40,7 @@ export default function Channels() {
   const [isDriverActive, setIsDriverActive] = useState(false);
   const [marketLeads, setMarketLeads] = useState([]);
   const [isScouting, setIsScouting] = useState(false);
+  const [isReplying, setIsReplying] = useState({}); // lead_id -> boolean
 
   // Check for Extension presence & Listen for data
   useEffect(() => {
@@ -119,7 +120,36 @@ export default function Channels() {
     setIsScouting(true);
     window.postMessage({ type: "START_MARKET_SCOUT", clerk_id: user.id }, "*");
     // Safety timeout
-    setTimeout(() => setIsScouting(false), 30000);
+    setTimeout(() => setIsScouting(false), 45000);
+  };
+
+  const handleReply = async (lead) => {
+    if (!user) return;
+    setIsReplying(prev => ({ ...prev, [lead.id]: true }));
+    try {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/market/draft-reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clerk_id: user.id,
+          lead_content: lead.content,
+          lead_handle: lead.handle
+        })
+      });
+      const data = await resp.json();
+      if (data.reply) {
+        // Send to extension to perform the physical action
+        window.postMessage({
+          type: "SEND_AUTO_REPLY",
+          handle: lead.handle,
+          text: data.reply
+        }, "*");
+      }
+    } catch (err) {
+      console.error("Failed to draft reply", err);
+    } finally {
+      setIsReplying(prev => ({ ...prev, [lead.id]: false }));
+    }
   };
 
 
@@ -517,9 +547,31 @@ export default function Channels() {
                         <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', margin: '0 0 8px 0', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                           {lead.content}
                         </p>
-                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: 4 }}>
+                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: 4, marginBottom: 8 }}>
                           Reason: {lead.reason}
                         </div>
+                        <button 
+                          onClick={() => handleReply(lead)}
+                          disabled={isReplying[lead.id]}
+                          style={{
+                            width: '100%',
+                            padding: '6px',
+                            background: '#fbbf24',
+                            border: 'none',
+                            borderRadius: 6,
+                            color: '#000',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4
+                          }}
+                        >
+                          <MessageSquare size={12} />
+                          {isReplying[lead.id] ? 'Drafting...' : 'Spirit Reply'}
+                        </button>
                       </div>
                     ))}
                   </>

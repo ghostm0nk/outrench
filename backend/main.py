@@ -477,20 +477,45 @@ async def get_market_strategy(clerk_id: str):
     Unique Value: {startup['unique_value']}
     
     Identify 5 specific Twitter search queries (keywords or phrases) that would find people currently experiencing the problem this startup solves.
-    Focus on "complaint" keywords or "advice seeking" questions.
-    Return ONLY a JSON list of strings.
+    Focus on "complaint" keywords, "advice seeking" questions, or conversational topics.
+    Return ONLY a JSON list of strings. Example: ["how to start a convo", "hate dating apps"]
     """
     
-    response = await get_ai_response(prompt, "You are an expert market researcher.")
+    response = await get_ai_response(prompt, "You are a growth hacker specialized in social listening.")
     try:
-        # Simple extraction
         import json
         start = response.find('[')
         end = response.rfind(']') + 1
         queries = json.loads(response[start:end])
         return {"queries": queries}
     except:
-        return {"queries": ["overthinking intros", "dating app fatigue", "first message anxiety"]}
+        return {"queries": ["intro anxiety", "how to break the ice", "dating app fatigue"]}
+
+@app.post("/api/market/draft-reply")
+async def draft_market_reply(req: Dict):
+    # Expected keys: clerk_id, lead_content, lead_handle
+    clerk_id = req.get('clerk_id')
+    content = req.get('lead_content')
+    
+    # Fetch startup context
+    res = supabase.table("startups").select("*").eq("clerk_id", clerk_id).execute()
+    if not res.data: raise HTTPException(status_code=404, detail="Startup not found")
+    startup = res.data[0]
+
+    from agent_logic import get_ai_response
+    prompt = f"""
+    A user tweeted: "{content}"
+    
+    Our startup {startup['name']} solves this problem: {startup['problem_solved']}
+    Our unique value is: {startup['unique_value']}
+    
+    Draft a short, helpful, and CASUAL reply to this person. 
+    DONT be salesy. DONT use hashtags. Just be a helpful human.
+    Max 140 characters.
+    """
+    
+    reply = await get_ai_response(prompt, "You are a friendly, helpful community manager.")
+    return {"reply": reply.strip().replace('"', '')}
 
 @app.post("/api/market/leads")
 async def save_market_lead(req: MarketLeadRequest):

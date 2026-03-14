@@ -1,36 +1,42 @@
 // popup.js
 function updateUI() {
-  chrome.storage.local.get(['twitter_profile'], (result) => {
-    const statusEl = document.getElementById('twitter-status');
-    const profileBox = document.getElementById('profile-display');
-    const nameEl = document.getElementById('profile-name');
-    const handleEl = document.getElementById('profile-handle');
-    const avatarEl = document.getElementById('profile-avatar');
+  chrome.storage.local.get(['twitter_profile', 'spirit_log'], (result) => {
+    const dot = document.getElementById('session-dot');
+    const text = document.getElementById('session-text');
+    const profileArea = document.getElementById('profile-area');
+    const logArea = document.getElementById('spirit-log');
 
     if (result.twitter_profile) {
-      statusEl.innerHTML = '<span class="status-dot active"></span>Synced';
-      statusEl.style.color = '#10b981';
-      
-      profileBox.style.display = 'flex';
-      nameEl.innerText = result.twitter_profile.name;
-      handleEl.innerText = result.twitter_profile.handle;
-      if (result.twitter_profile.avatar_url) {
-        avatarEl.src = result.twitter_profile.avatar_url;
-      }
+      dot.classList.add('active');
+      text.innerText = "Found Session";
+      profileArea.style.display = 'flex';
+      document.getElementById('profile-img').src = result.twitter_profile.avatar_url || "";
+      document.getElementById('profile-name').innerText = result.twitter_profile.name;
+      document.getElementById('profile-handle').innerText = result.twitter_profile.handle;
     } else {
-      statusEl.innerHTML = '<span class="status-dot inactive"></span>Not Found';
-      statusEl.style.color = '#ef4444';
-      profileBox.style.display = 'none';
+      dot.classList.remove('active');
+      text.innerText = "Not Found";
+      profileArea.style.display = 'none';
+    }
+
+    if (result.spirit_log) {
+      logArea.innerText = `Spirit: ${result.spirit_log}`;
     }
   });
 }
 
-// Update immediately on open
-updateUI();
-
-// Listen for storage changes while open
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.twitter_profile) {
-    updateUI();
-  }
+document.getElementById('btn-scout').addEventListener('click', () => {
+  const logArea = document.getElementById('spirit-log');
+  logArea.innerText = "Spirit: Summoning mission strategy...";
+  
+  // We send a message to background to start searching
+  // We'll use a hardcoded dev id or the background will find it from storage
+  chrome.runtime.sendMessage({ type: "START_MARKET_SCOUT" });
+  
+  // Close popup after a delay so they can see the start
+  setTimeout(() => window.close(), 1500);
 });
+
+// Refresh every second
+setInterval(updateUI, 1000);
+updateUI();
