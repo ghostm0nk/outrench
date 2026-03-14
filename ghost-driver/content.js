@@ -5,7 +5,37 @@ const IS_DASHBOARD = window.location.host.includes('localhost') ||
                      window.location.host.includes('outrench') ||
                      window.location.host.includes('onrender');
 
-// --- SPIRIT'S PHYSICAL HANDS (Utilities) ---
+// --- SPIRIT'S HUD ---
+
+function showSpiritHUD(text, isError = false) {
+  let hud = document.getElementById('spirit-hud');
+  if (!hud) {
+    hud = document.createElement('div');
+    hud.id = 'spirit-hud';
+    Object.assign(hud.style, {
+      position: 'fixed', top: '20px', right: '20px',
+      background: 'rgba(15, 12, 8, 0.95)',
+      color: '#f59e0b', padding: '12px 18px',
+      borderRadius: '12px', fontSize: '12px',
+      fontWeight: '700', zIndex: '999999',
+      border: '1px solid rgba(245,158,11,0.5)',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'center', gap: '10px',
+      fontFamily: 'system-ui, sans-serif', transition: 'all 0.3s cubic-bezier(0.19, 1, 0.22, 1)'
+    });
+    hud.innerHTML = `<span id="spirit-spinner">✨</span> <span id="spirit-text"></span>`;
+    document.body.appendChild(hud);
+    
+    // Add pulse animation
+    const style = document.createElement('style');
+    style.innerText = `@keyframes spiritPulse { 0% { opacity: 0.8; } 50% { opacity: 1; transform: scale(1.02); } 100% { opacity: 0.8; } } #spirit-spinner { animation: spiritPulse 1.5s infinite; }`;
+    document.head.appendChild(style);
+  }
+  document.getElementById('spirit-text').innerText = text;
+  if (isError) hud.style.borderColor = '#ef4444';
+}
+
+// --- SPIRIT'S PHYSICAL HANDS ---
 
 async function simulateTyping(element, text) {
   element.focus();
@@ -14,27 +44,27 @@ async function simulateTyping(element, text) {
     const char = text[i];
     const opts = { key: char, keyCode: char.charCodeAt(0), bubbles: true };
     element.dispatchEvent(new KeyboardEvent('keydown', opts));
-    element.dispatchEvent(new KeyboardEvent('keypress', opts));
     
-    // For React/Modern apps, we often need to set value and trigger 'input'
+    // Modern input value setting
     const start = element.selectionStart;
     const end = element.selectionEnd;
-    const val = element.value;
+    const val = element.value || "";
     element.value = val.slice(0, start) + char + val.slice(end);
     element.selectionStart = element.selectionEnd = start + 1;
     
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new KeyboardEvent('keyup', opts));
-    
-    // Random delay between 50ms and 150ms to look human
-    await new Promise(r => setTimeout(r, Math.random() * 100 + 50));
+    await new Promise(r => setTimeout(r, Math.random() * 80 + 40));
   }
+  // Hit Enter
+  element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
 }
 
-async function autoScroll(times = 3) {
+async function autoScroll(times = 2) {
   for (let i = 0; i < times; i++) {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    await new Promise(r => setTimeout(r, 2000)); // wait for load
+    showSpiritHUD(`Scanning depths... (Layer ${i+1}/${times})`);
+    window.scrollTo({ top: window.scrollY + 800, behavior: 'smooth' });
+    await new Promise(r => setTimeout(r, 2500));
   }
 }
 
@@ -58,78 +88,52 @@ if (IS_DASHBOARD) {
         clerk_id: event.data.clerk_id
       });
     }
-    // New: Auto-Reply Request
-    if (event.data.type === "SEND_AUTO_REPLY") {
-        chrome.runtime.sendMessage({ 
-          type: "PERFORM_AUTO_REPLY",
-          handle: event.data.handle,
-          text: event.data.text
-        });
-      }
   });
-  chrome.runtime.onMessage.addListener((msg) => {
-    window.postMessage(msg, "*");
-  });
+  chrome.runtime.onMessage.addListener((msg) => { window.postMessage(msg, "*"); });
 }
 
 if (IS_TWITTER) {
-  // Listen for specific commands from Background
   chrome.runtime.onMessage.addListener(async (msg) => {
-    if (msg.type === "GHOST_TYPE_REPLY") {
-        // 1. Find the reply box (this is a simplified selector for Twitter's complex layout)
-        const replyBox = document.querySelector('[data-testid="tweetTextarea_0"]');
-        if (replyBox) {
-            await simulateTyping(replyBox, msg.text);
-            // Optionally: document.querySelector('[data-testid="tweetButtonInline"]').click();
-        }
+    if (msg.type === "BEGIN_TYPED_SEARCH") {
+      showSpiritHUD(`Manifesting: "${msg.query}"`);
+      // 1. Find the search input
+      const searchInput = document.querySelector('[data-testid="SearchBox_Search_Input"]');
+      if (searchInput) {
+        await simulateTyping(searchInput, msg.query);
+        // Scraper will be triggered by URL change observer
+      } else {
+        showSpiritHUD("Search bar hidden. Retrying...", true);
+      }
     }
   });
-
-  function scrapeProfile() {
-    const interval = setInterval(() => {
-      const handleSelectors = ['[data-testid="SideNav_AccountSwitcher_Badge"] span:last-child', '[data-testid="UserName"] span:last-child'];
-      let handle = null;
-      for (const sel of handleSelectors) {
-        const el = document.querySelector(sel);
-        if (el) {
-          const text = el.innerText || "";
-          if (text.includes('@')) { handle = text.trim(); break; }
-        }
-      }
-      if (handle) {
-        const nameEl = document.querySelector('[data-testid="SideNav_AccountSwitcher_Badge"] div:first-child span') || document.querySelector('[data-testid="UserName"] div:first-child span');
-        const avatarEl = document.querySelector('[data-testid="SideNav_AccountSwitcher_Badge"] img') || document.querySelector('a[href$="/photo"] img');
-        clearInterval(interval);
-        chrome.runtime.sendMessage({ type: "TWITTER_PROFILE_FETCHED", data: { handle, name: nameEl ? nameEl.innerText.trim() : handle.replace('@', ''), avatar_url: avatarEl ? avatarEl.src : null, platform: 'twitter' }});
-      }
-    }, 2000);
-    setTimeout(() => clearInterval(interval), 15000);
-  }
 
   async function scrapeSearchResults() {
     if (!window.location.href.includes('/search')) return;
     
-    console.log("Ghost Driver: Starting deep scout with Auto-Scroll...");
-    await autoScroll(2); // Scroll twice to get more leads
+    showSpiritHUD("Spirit Active: Scouting Market Signals...");
+    await new Promise(r => setTimeout(r, 2000)); // Wait for initial results
+    
+    await autoScroll(3); 
 
     const tweets = document.querySelectorAll('[data-testid="tweet"]');
     const leads = [];
+
+    showSpiritHUD(`Analyzing ${tweets.length} potential signals...`);
 
     tweets.forEach(tweet => {
       try {
         const userEl = tweet.querySelector('[data-testid="User-Names"]');
         const handleEl = userEl.querySelector('span:last-child');
-        const nameEl = userEl.querySelector('span:first-child');
         const contentEl = tweet.querySelector('[data-testid="tweetText"]');
         const avatarEl = tweet.querySelector('img[src*="profile_images"]');
 
         if (handleEl && contentEl && !leads.find(l => l.handle === handleEl.innerText.trim())) {
           leads.push({
             handle: handleEl.innerText.trim(),
-            name: nameEl ? nameEl.innerText.trim() : handleEl.innerText.trim(),
+            name: userEl.querySelector('span:first-child')?.innerText.trim() || handleEl.innerText.trim(),
             avatar_url: avatarEl ? avatarEl.src : null,
             content: contentEl.innerText.trim(),
-            reason: "Spirit found a matching pain point."
+            reason: "Target identified via AI Strategy."
           });
         }
       } catch (e) {}
@@ -137,21 +141,23 @@ if (IS_TWITTER) {
 
     if (leads.length > 0) {
       chrome.runtime.sendMessage({ type: "LEADS_SCRAPED", leads });
+      showSpiritHUD(`Success: ${leads.length} Leads captured!`);
+      setTimeout(() => document.getElementById('spirit-hud')?.remove(), 3000);
     }
   }
 
-  // Monitor URL changes for SPA navigation
+  // SPA Observer
   let lastUrl = location.href;
   new MutationObserver(() => {
     if (location.href !== lastUrl) {
+      const oldUrl = lastUrl;
       lastUrl = location.href;
-      if (location.href.includes('/search')) scrapeSearchResults();
-      else scrapeProfile();
+      if (lastUrl.includes('/search')) {
+          scrapeSearchResults();
+      }
     }
   }).observe(document, { subtree: true, childList: true });
 
-  if (document.readyState === 'complete') {
-    if (window.location.href.includes('/search')) scrapeSearchResults();
-    else scrapeProfile();
-  }
+  // Initial load
+  if (location.href.includes('/search')) scrapeSearchResults();
 }
