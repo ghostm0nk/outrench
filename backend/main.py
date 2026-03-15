@@ -137,6 +137,7 @@ class ProfileAnalysisRequest(BaseModel):
     handle: str
     account_type: str
     followed_accounts: list = []
+    communities: list = []
     bio: str = ""
     post_link: str = ""
 
@@ -450,7 +451,8 @@ async def analyze_profile(req: ProfileAnalysisRequest):
         raise HTTPException(status_code=500, detail="GROQ_API_KEY missing")
 
     platform_label = {"twitter": "Twitter/X", "instagram": "Instagram", "linkedin": "LinkedIn"}.get(req.platform, req.platform)
-    followed_str = ", ".join(f"@{a.lstrip('@')}" for a in req.followed_accounts if a) or "not provided"
+    followed_str    = ", ".join(f"@{a.lstrip('@')}" for a in req.followed_accounts if a) or "not provided"
+    communities_str = ", ".join(req.communities) if req.communities else "not provided"
 
     prompt = f"""Analyze this founder's social media presence.
 
@@ -460,6 +462,7 @@ Account type: {req.account_type}
 Bio: {req.bio or 'not provided'}
 Post link: {req.post_link or 'not provided'}
 Accounts they follow/admire: {followed_str}
+Communities they follow: {communities_str}
 
 Based on this, infer:
 1. Who is their target audience on {platform_label}?

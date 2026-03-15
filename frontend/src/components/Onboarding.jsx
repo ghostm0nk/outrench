@@ -18,11 +18,12 @@ export default function Onboarding({ onComplete }) {
   const [phase, setPhase]       = useState('account_type');
   const [data, setData]         = useState({
     account_type: '', platform: '', handle: '',
-    followed_accounts: [], bio: '', post_link: '',
+    followed_accounts: [], communities: [], bio: '', post_link: '',
   });
   const [analysis, setAnalysis] = useState(null);
   const [input, setInput]       = useState('');
   const [followInput, setFollowInput] = useState('');
+  const [communityInput, setCommunityInput] = useState('');
   const [saving, setSaving]     = useState(false);
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
@@ -109,6 +110,35 @@ export default function Onboarding({ onComplete }) {
     }
     pushLine('user', data.followed_accounts.map(a => `@${a}`).join(', '));
     setTimeout(() => {
+      if (data.platform === 'twitter') {
+        pushLine('ai', "Any public Twitter communities you follow related to your work? Add up to 3. Skip if none.");
+        setPhase('communities');
+      } else {
+        pushLine('ai', "Paste your bio exactly as it appears on your profile.");
+        setPhase('bio');
+      }
+    }, 350);
+  };
+
+  const addCommunity = (e) => {
+    e.preventDefault();
+    const val = communityInput.trim();
+    if (!val || data.communities.length >= 3) return;
+    setData(d => ({ ...d, communities: [...d.communities, val] }));
+    setCommunityInput('');
+  };
+
+  const removeCommunity = (idx) => {
+    setData(d => ({ ...d, communities: d.communities.filter((_, i) => i !== idx) }));
+  };
+
+  const continueFromCommunities = () => {
+    if (data.communities.length > 0) {
+      pushLine('user', data.communities.join(', '));
+    } else {
+      pushLine('user', '(skip)');
+    }
+    setTimeout(() => {
       pushLine('ai', "Paste your bio exactly as it appears on your profile.");
       setPhase('bio');
     }, 350);
@@ -143,6 +173,7 @@ export default function Onboarding({ onComplete }) {
           handle: finalData.handle,
           account_type: finalData.account_type,
           followed_accounts: finalData.followed_accounts,
+          communities: finalData.communities,
           bio: finalData.bio,
           post_link: finalData.post_link,
         });
@@ -250,6 +281,41 @@ export default function Onboarding({ onComplete }) {
             Continue →
           </button>
         )}
+      </div>
+    );
+
+    if (phase === 'communities') return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {data.communities.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {data.communities.map((c, i) => (
+              <span key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.25)',
+                borderRadius: 8, padding: '4px 10px',
+                fontSize: 13, color: '#818cf8',
+                fontFamily: '"PPSupplyMono", monospace',
+              }}>
+                {c}
+                <button onClick={() => removeCommunity(i)} style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'rgba(255,255,255,0.3)', display: 'flex', padding: 0, lineHeight: 1,
+                }}>
+                  <XIcon size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {data.communities.length < 3 && (
+          <form onSubmit={addCommunity} style={{ display: 'flex', gap: 8 }}>
+            <TerminalInput value={communityInput} onChange={e => setCommunityInput(e.target.value)} placeholder="Community name" autoFocus />
+            <IconBtn type="submit" disabled={!communityInput.trim()}><Plus size={15} /></IconBtn>
+          </form>
+        )}
+        <button onClick={continueFromCommunities} style={continueBtnStyle}>
+          {data.communities.length === 0 ? 'Skip →' : 'Continue →'}
+        </button>
       </div>
     );
 
