@@ -90,6 +90,36 @@ Return ONLY the JSON object. No markdown, no explanation outside it."""
     except Exception as ex:
         return {"action": "skip", "reason": f"Eval error: {str(ex)[:40]}"}
 
+async def setup_login_interactive(websocket) -> dict:
+    """
+    Asks the user for X/Twitter credentials interactively through the browser terminal.
+    Sends 'prompt' messages and awaits 'prompt_response' replies over the WebSocket.
+    Returns {"username": ..., "password": ...} or raises if the user cancels.
+    """
+    async def ask(field: str, label: str, masked: bool) -> str:
+        await websocket.send_json({"type": "prompt", "field": field, "text": label, "masked": masked})
+        raw = await websocket.receive_text()
+        payload = json.loads(raw)
+        if payload.get("type") == "prompt_response" and payload.get("field") == field:
+            return payload.get("value", "").strip()
+        return ""
+
+    await websocket.send_json({"type": "info", "text": "Spirit needs your X credentials to operate."})
+
+    username = await ask("username", "Enter your X/Twitter username:", False)
+    if not username:
+        await websocket.send_json({"type": "error", "text": "Login cancelled — no username provided."})
+        return {}
+
+    password = await ask("password", "Enter your X/Twitter password:", True)
+    if not password:
+        await websocket.send_json({"type": "error", "text": "Login cancelled — no password provided."})
+        return {}
+
+    await websocket.send_json({"type": "success", "text": f"Credentials received for @{username}. Spirit will use these to log in."})
+    return {"username": username, "password": password}
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Playwright runs as a pure sync session in a dedicated OS thread.
@@ -318,5 +348,4 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
     # 4. Session summary
     likes = sum(1 for r in results if "like" in r.get("action",""))
     follows = sum(1 for r in results if "follow" in r.get("action",""))
-    
     await websocket.send_json({"type": "success", "text": f"Session complete — {likes} likes, {follows} follows, {len(results)} interactions saved."})

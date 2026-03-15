@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 from svix.webhooks import Webhook, WebhookVerificationError
-from agent_logic import stream_agent_logic
+from agent_logic import stream_agent_logic, setup_login_interactive
 from twitter_api import verify_twitter_credentials
 
 app = FastAPI(title="Outrench AI Backend")
@@ -579,10 +579,9 @@ async def agent_stream(websocket: WebSocket):
 
             print(f"Agent received task: {task} from {clerk_id}")
 
-            # Route "setup login" to interactive login setup
-            task_lower = task.lower()
-            if any(kw in task_lower for kw in ["setup login", "login setup", "connect twitter", "connect x", "setup session"]):
-                from agent_logic import setup_login_interactive
+            # Interactive login — prompts user for credentials through the terminal
+            task_lower = task.strip().lower()
+            if any(kw in task_lower for kw in ["setup login", "set up login", "login setup", "connect twitter", "connect x", "setup session", "login"]):
                 await setup_login_interactive(websocket)
             else:
                 await stream_agent_logic(task, websocket, clerk_id=clerk_id, supabase=supabase)
