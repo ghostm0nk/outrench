@@ -112,23 +112,22 @@ class OutreachRequest(BaseModel):
 
 
 class OnboardingRequest(BaseModel):
+    """Saves to the `profiles` table (social presence, not product info)."""
     clerk_id: str
-    name: str
-    one_liner: str = ""
-    website_url: str = ""
-    category: str = ""
-    target_audience: str = ""
-    problem_solved: str = ""
-    unique_value: str = ""
-    tone: str = "casual"
-    account_types: str = "both"   # personal | product | both
-    mode: str = "growth"           # growth | content | both
-    # New profile fields
-    platform: str = ""            # twitter | instagram | linkedin
+    name: str                       # user's display name
+    platform: str = ""              # twitter | instagram | linkedin
     handle: str = ""
-    followed_accounts: str = ""   # JSON array stored as text
+    account_type: str = ""          # founder | creator | both
+    followed_accounts: str = ""     # JSON array stored as text
+    communities: str = ""           # JSON array stored as text (Twitter only)
     bio: str = ""
     post_link: str = ""
+    # AI-inferred fields (from /api/onboarding/analyze)
+    target_audience: str = ""
+    tone: str = ""
+    space: str = ""
+    problem_solved: str = ""
+    summary: str = ""
 
 
 class ProfileAnalysisRequest(BaseModel):
@@ -207,21 +206,20 @@ def check_banned_content(text: str) -> str | None:
 
 def validate_onboarding(req: OnboardingRequest) -> str | None:
     """Returns an error message if validation fails, None if all good."""
-    fields_to_check = [req.name, req.one_liner, req.target_audience, req.problem_solved, req.unique_value]
-    
+    fields_to_check = [req.name, req.bio, req.summary]
+
     for field in fields_to_check:
+        if not field:
+            continue
         if check_profanity(field):
             return "Inappropriate language detected. Please keep it professional."
         banned = check_banned_content(field)
         if banned:
             return f'Outrench cannot be used for "{banned}"-related businesses.'
-    
-    if req.category and req.category not in ALLOWED_CATEGORIES:
-        return f"Invalid category: {req.category}"
-    
+
     if req.name and len(req.name.strip()) < 2:
-        return "Startup name must be at least 2 characters."
-    
+        return "Name must be at least 2 characters."
+
     return None
 
 
@@ -386,42 +384,55 @@ async def save_onboarding(req: OnboardingRequest):
         return {"status": "rejected", "reason": rejection_reason}
 
     try:
-        # Find the user by clerk_id
-        user_result = supabase.table("users").select("id").eq("clerk_id", req.clerk_id).execute()
-        user_id = user_result.data[0]["id"] if user_result.data else None
+        is_product = req.account_type == "product"
 
-        startup_data = {
-            "clerk_id": req.clerk_id,
-            "user_id": user_id,
-            "name": req.name,
-            "one_liner": req.one_liner,
-            "website_url": req.website_url,
-            "category": req.category,
-            "target_audience": req.target_audience,
-            "problem_solved": req.problem_solved,
-            "unique_value": req.unique_value,
-            "tone": req.tone,
-            "account_types": req.account_types,
-            "mode": req.mode,
-            "platform": req.platform,
-            "handle": req.handle,
-            "followed_accounts": req.followed_accounts,
-            "bio": req.bio,
-            "post_link": req.post_link,
-        }
-
-        # Check if a profile already exists, then insert or update accordingly
-        existing = supabase.table("startups").select("id").eq("clerk_id", req.clerk_id).execute()
-        if existing.data:
-            supabase.table("startups").update(startup_data).eq("clerk_id", req.clerk_id).execute()
+        if is_product:
+            # Brand/product accounts → startups table
+            row = {
+                "clerk_id": req.clerk_id,
+                "name": req.name,
+                "platform": req.platform,
+                "handle": req.handle,
+                "followed_accounts": req.followed_accounts,
+                "bio": req.bio,
+                "post_link": req.post_link,
+                "target_audience": req.target_audience,
+                "tone": req.tone,
+                "problem_solved": req.problem_solved,
+                "summary": req.summary,
+            }
+            table = "startups"
         else:
-            supabase.table("startups").insert(startup_data).execute()
+            # Personal brand / creator → profiles table
+            row = {
+                "clerk_id": req.clerk_id,
+                "name": req.name,
+                "platform": req.platform,
+                "handle": req.handle,
+                "account_type": req.account_type,
+                "followed_accounts": req.followed_accounts,
+                "communities": req.communities,
+                "bio": req.bio,
+                "post_link": req.post_link,
+                "target_audience": req.target_audience,
+                "tone": req.tone,
+                "space": req.space,
+                "problem_solved": req.problem_solved,
+                "summary": req.summary,
+            }
+            table = "profiles"
+
+        existing = supabase.table(table).select("id").eq("clerk_id", req.clerk_id).execute()
+        if existing.data:
+            supabase.table(table).update(row).eq("clerk_id", req.clerk_id).execute()
+        else:
+            supabase.table(table).insert(row).execute()
 
         # Mark user as onboarded
         supabase.table("users").update({"onboarded": True}).eq("clerk_id", req.clerk_id).execute()
 
-        print(f"Onboarding complete for: {req.name} ({req.clerk_id})")
-        return {"status": "success", "startup_name": req.name}
+        print(f"Onboarding complete for: {req.name} ({req.clerk_id}) → {table}")
+        return {"status": "success", "name": req.name}
 
     except Exception as e:
         print(f"Onboarding error: {e}")

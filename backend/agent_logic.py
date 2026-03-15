@@ -61,7 +61,7 @@ def _generate_search_queries(startup_context: dict, user_goal: str = "") -> list
     name     = startup_context.get("name", "")
     problem  = startup_context.get("problem_solved", "")
     audience = startup_context.get("target_audience", "founders")
-    mode     = startup_context.get("mode", "growth")
+    space    = startup_context.get("space", "")
 
     system = """You generate targeted X/Twitter search queries for founder growth.
 
@@ -70,11 +70,11 @@ Each query should find people actively experiencing the problem OR discussing th
 Focus on: complaint language, advice-seeking, building-in-public posts, pain points.
 Write queries the way real people tweet — no hashtags, 2-5 words each."""
 
-    prompt = f"""Startup: {name}
-Problem it solves: {problem}
+    prompt = f"""Founder: {name}
+Space: {space}
+Problem they talk about: {problem}
 Target audience: {audience}
-Mode: {mode}
-User's session goal hint: {user_goal}
+Session goal hint: {user_goal}
 
 Generate 4 X/Twitter search queries to find this audience right now."""
 
@@ -113,19 +113,20 @@ def _evaluate_post(post_text: str, goal: str, startup_context: dict = None) -> d
         return {"action": "skip", "reason": "No API key"}
 
     if startup_context:
-        name     = startup_context.get("name", "a startup")
-        one_liner = startup_context.get("one_liner", "")
+        name     = startup_context.get("name", "the founder")
+        bio      = startup_context.get("bio", "")
         audience = startup_context.get("target_audience", "founders")
         problem  = startup_context.get("problem_solved", "")
         tone     = startup_context.get("tone", "direct and genuine")
-        mode     = startup_context.get("mode", "growth")
+        space    = startup_context.get("space", "")
 
-        system = f"""You are Spirit, the AI growth agent working for {name} — {one_liner}.
+        system = f"""You are Spirit, the AI growth agent working for {name}.
 The account owner is a founder trying to grow their personal brand on X/Twitter.
-Current mode: {mode}.
+Their space: {space}
+Bio: {bio}
 
 Target audience: {audience}
-Problem {name} solves: {problem}
+What they talk about / their angle: {problem}
 
 ACTION PRIORITY (use the highest-value action that fits):
 1. "comment" — A thoughtful reply. Use when: the post has traction (likes/replies visible), the author is a real founder sharing a struggle/milestone/insight, and a reply from {name}'s founder perspective would genuinely add value. This is the most visible and highest-ROI action.
@@ -202,16 +203,19 @@ def _generate_comment(post_text: str, startup_context: dict) -> str:
     if not GROQ_API_KEY:
         return ""
 
-    name      = startup_context.get("name", "us")
-    one_liner = startup_context.get("one_liner", "")
+    name      = startup_context.get("name", "the founder")
+    bio       = startup_context.get("bio", "")
     tone      = startup_context.get("tone", "direct and genuine")
     problem   = startup_context.get("problem_solved", "")
     audience  = startup_context.get("target_audience", "founders")
+    space     = startup_context.get("space", "")
 
-    system = f"""You write X/Twitter replies for the founder of {name} ({one_liner}).
+    system = f"""You write X/Twitter replies for {name}, a founder.
+Bio: {bio}
+Space: {space}
 
 You speak in first person as the founder. Tone: {tone}.
-You deeply understand this problem: {problem} — because you're building a solution for it.
+You deeply understand this: {problem}
 Your audience: {audience}.
 
 Rules:
@@ -515,20 +519,21 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
     limits    = TIMEFRAME_CONFIG.get(timeframe, DEFAULT_CONFIG)
     num_posts = limits["posts"]
 
-    # 1. Fetch startup profile — Spirit needs this to know who it's working for
+    # 1. Fetch user profile — check profiles first (personal), then startups (brand)
     startup_context = None
     if supabase and clerk_id:
         try:
-            res = supabase.table("startups").select("*").eq("clerk_id", clerk_id).execute()
+            res = supabase.table("profiles").select("*").eq("clerk_id", clerk_id).execute()
+            if not res.data:
+                res = supabase.table("startups").select("*").eq("clerk_id", clerk_id).execute()
             if res.data:
                 startup_context = res.data[0]
-                startup_name    = startup_context.get("name", "your startup")
-                mode            = startup_context.get("mode", "growth")
-                await websocket.send_json({"type": "info", "text": f"Spirit loaded profile: {startup_name} · {mode} mode"})
+                startup_name    = startup_context.get("name", "your profile")
+                await websocket.send_json({"type": "info", "text": f"Spirit loaded profile: {startup_name}"})
             else:
-                await websocket.send_json({"type": "warn", "text": "No startup profile found — complete onboarding for smarter scouting."})
+                await websocket.send_json({"type": "warn", "text": "No profile found — complete onboarding for smarter scouting."})
         except Exception as e:
-            await websocket.send_json({"type": "warn", "text": f"Could not load startup profile: {str(e)[:60]}"})
+            await websocket.send_json({"type": "warn", "text": f"Could not load profile: {str(e)[:60]}"})
 
     # 2. Acknowledge
     await websocket.send_json({"type": "ai_response", "text": f"Spirit activated. Goal: '{user_input}'"})

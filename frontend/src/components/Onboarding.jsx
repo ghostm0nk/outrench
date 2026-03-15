@@ -194,18 +194,18 @@ export default function Onboarding({ onComplete }) {
       await axios.post(`${API}/api/onboarding`, {
         clerk_id: user.id,
         name: data.handle,
-        one_liner: analysis?.space || '',
-        target_audience: analysis?.target_audience || '',
-        problem_solved: analysis?.problem_solved || '',
-        unique_value: '',
-        tone: analysis?.tone || 'direct and genuine',
-        account_types: data.account_type,
-        mode: 'growth',
         platform: data.platform,
         handle: data.handle,
+        account_type: data.account_type,
         followed_accounts: JSON.stringify(data.followed_accounts),
+        communities: JSON.stringify(data.communities || []),
         bio: data.bio,
         post_link: data.post_link,
+        target_audience: analysis?.target_audience || '',
+        tone: analysis?.tone || 'direct and genuine',
+        space: analysis?.space || '',
+        problem_solved: analysis?.problem_solved || '',
+        summary: analysis?.summary || '',
       });
       pushLine('success', "You're set. Spirit is ready to work.");
       setPhase('done');
