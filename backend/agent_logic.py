@@ -13,6 +13,10 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 # Where we save the browser session so the user only logs in once
 SESSION_DIR = os.path.join(os.path.dirname(__file__), "browser_session")
 
+# In-memory credentials store: {clerk_id: {"username": ..., "password": ...}}
+# Ephemeral — cleared on server restart. User must run "setup login" again after redeploy.
+_stored_credentials: dict = {}
+
 
 async def get_ai_response(prompt: str, system_prompt: str = "You are a helpful AI assistant.") -> str:
     if not GROQ_API_KEY:
@@ -90,11 +94,12 @@ Return ONLY the JSON object. No markdown, no explanation outside it."""
     except Exception as ex:
         return {"action": "skip", "reason": f"Eval error: {str(ex)[:40]}"}
 
-async def setup_login_interactive(websocket) -> dict:
+async def setup_login_interactive(websocket, clerk_id: str = None) -> dict:
     """
     Asks the user for X/Twitter credentials interactively through the browser terminal.
     Sends 'prompt' messages and awaits 'prompt_response' replies over the WebSocket.
-    Returns {"username": ..., "password": ...} or raises if the user cancels.
+    Stores credentials in _stored_credentials keyed by clerk_id for use by Playwright.
+    Returns {"username": ..., "password": ...} or {} if the user cancels.
     """
     async def ask(field: str, label: str, masked: bool) -> str:
         await websocket.send_json({"type": "prompt", "field": field, "text": label, "masked": masked})
@@ -106,7 +111,7 @@ async def setup_login_interactive(websocket) -> dict:
 
     await websocket.send_json({"type": "info", "text": "Spirit needs your X credentials to operate."})
 
-    username = await ask("username", "Enter your X/Twitter username:", False)
+    username = await ask("username", "Enter your X/Twitter username (without @):", False)
     if not username:
         await websocket.send_json({"type": "error", "text": "Login cancelled — no username provided."})
         return {}
@@ -116,8 +121,14 @@ async def setup_login_interactive(websocket) -> dict:
         await websocket.send_json({"type": "error", "text": "Login cancelled — no password provided."})
         return {}
 
-    await websocket.send_json({"type": "success", "text": f"Credentials received for @{username}. Spirit will use these to log in."})
-    return {"username": username, "password": password}
+    creds = {"username": username, "password": password}
+
+    # Store so Playwright can use them on the next scouting run
+    store_key = clerk_id or "default"
+    _stored_credentials[store_key] = creds
+
+    await websocket.send_json({"type": "success", "text": f"Credentials saved for @{username}. Now give Spirit a scouting task to begin."})
+    return creds
 
 
 
@@ -125,20 +136,26 @@ async def setup_login_interactive(websocket) -> dict:
 # Playwright runs as a pure sync session in a dedicated OS thread.
 # Uses sync_playwright — no event loop, no Windows asyncio conflict.
 # ─────────────────────────────────────────────────────────────────────────────
-def _run_session(goal: str, log_queue: list, num_posts: int = 8):
+def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: dict = None):
     from playwright.sync_api import sync_playwright
     import os
 
     os.makedirs(SESSION_DIR, exist_ok=True)
+
+    # Use headless=True on cloud (Render has no display). Set PLAYWRIGHT_HEADLESS=0 locally to watch.
+    headless = os.getenv("PLAYWRIGHT_HEADLESS", "1") != "0"
 
     try:
         with sync_playwright() as p:
             # Use persistent context — saves login cookies between runs
             context = p.chromium.launch_persistent_context(
                 SESSION_DIR,
-                headless=False,
+                headless=headless,
                 args=[
                     '--disable-blink-features=AutomationControlled',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
                     '--no-first-run',
                     '--no-default-browser-check',
                 ],
@@ -162,22 +179,59 @@ def _run_session(goal: str, log_queue: list, num_posts: int = 8):
 
             # Check if we need to log in
             if "login" in page.url or "i/flow" in page.url or "x.com/?logout" in page.url:
-                log_queue.append(("warn", "Not logged in. Please log in to X in the browser window that just opened. Ghost Driver will wait..."))
-                
-                # Wait up to 3 minutes for the user to log in
-                deadline = time.time() + 180
-                while time.time() < deadline:
-                    time.sleep(2)
-                    current = page.url
-                    if "home" in current or "x.com/home" in current:
-                        break
+                if credentials and credentials.get("username") and credentials.get("password"):
+                    log_queue.append(("info", "Not logged in — auto-logging in with stored credentials..."))
+                    try:
+                        # Step 1: Enter username
+                        page.goto("https://x.com/i/flow/login", wait_until="domcontentloaded", timeout=20000)
+                        time.sleep(2)
+                        username_input = page.locator('input[autocomplete="username"]').first
+                        username_input.wait_for(timeout=8000)
+                        username_input.fill(credentials["username"])
+                        page.keyboard.press("Enter")
+                        time.sleep(2)
+
+                        # Step 2: Enter password (may need to skip "enter phone/email" step)
+                        password_input = page.locator('input[type="password"]').first
+                        if password_input.count() == 0:
+                            # X sometimes asks for email/phone first — skip by re-entering username
+                            extra = page.locator('input[data-testid="ocfEnterTextTextInput"]').first
+                            if extra.count() > 0:
+                                extra.fill(credentials["username"])
+                                page.keyboard.press("Enter")
+                                time.sleep(2)
+                            password_input = page.locator('input[type="password"]').first
+
+                        password_input.wait_for(timeout=8000)
+                        password_input.fill(credentials["password"])
+                        page.keyboard.press("Enter")
+                        time.sleep(4)
+
+                        # Wait for redirect to home
+                        deadline = time.time() + 30
+                        while time.time() < deadline:
+                            if "home" in page.url:
+                                break
+                            time.sleep(1)
+                        else:
+                            log_queue.append(("error", "Auto-login failed — wrong credentials or X blocked the login. Try 'setup login' again."))
+                            context.close()
+                            log_queue.append(("__results__", []))
+                            return
+
+                        log_queue.append(("success", "Logged in successfully."))
+                        time.sleep(2)
+
+                    except Exception as login_ex:
+                        log_queue.append(("error", f"Auto-login error: {str(login_ex)[:100]}"))
+                        context.close()
+                        log_queue.append(("__results__", []))
+                        return
                 else:
-                    log_queue.append(("error", "Login timeout. Please log in within 60 seconds next time."))
+                    log_queue.append(("error", "Not logged in to X. Type 'setup login' first to connect your account."))
                     context.close()
                     log_queue.append(("__results__", []))
                     return
-
-                time.sleep(2)  # Let feed fully load after login
 
             log_queue.append(("success", "Logged in. Reading home feed..."))
             
@@ -306,9 +360,12 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
 
     log_queue = []
 
+    # Look up stored credentials for this user
+    credentials = _stored_credentials.get(clerk_id or "default")
+
     thread = threading.Thread(
         target=_run_session,
-        args=(user_input, log_queue, 8),
+        args=(user_input, log_queue, 8, credentials),
         daemon=True
     )
     thread.start()
