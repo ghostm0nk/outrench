@@ -142,6 +142,54 @@ async def setup_login_interactive(websocket, clerk_id: str = None, supabase=None
 
 
 
+async def setup_cookies_interactive(websocket, clerk_id: str = None, supabase=None) -> dict:
+    """
+    Asks the user for their X browser cookies (auth_token + ct0).
+    Go to x.com → F12 → Application → Cookies → x.com → copy values.
+    Bypasses Cloudflare — no login request made.
+    """
+    async def ask(field: str, label: str) -> str:
+        await websocket.send_json({"type": "prompt", "field": field, "text": label, "masked": True})
+        raw = await websocket.receive_text()
+        payload = json.loads(raw)
+        if payload.get("type") == "prompt_response" and payload.get("field") == field:
+            return payload.get("value", "").strip()
+        return ""
+
+    await websocket.send_json({"type": "info", "text": "Go to x.com → F12 → Application tab → Cookies → https://x.com"})
+
+    auth_token = await ask("auth_token", "Paste your 'auth_token' cookie value:")
+    if not auth_token:
+        await websocket.send_json({"type": "error", "text": "Cancelled — no auth_token provided."})
+        return {}
+
+    ct0 = await ask("ct0", "Paste your 'ct0' cookie value:")
+    if not ct0:
+        await websocket.send_json({"type": "error", "text": "Cancelled — no ct0 provided."})
+        return {}
+
+    cookies = {"auth_token": auth_token, "ct0": ct0}
+    store_key = clerk_id or "default"
+    _stored_credentials[store_key] = cookies
+
+    if supabase and clerk_id:
+        try:
+            supabase.table("channel_credentials").upsert({
+                "clerk_id": clerk_id,
+                "platform": "twitter",
+                "account_type": "cookie_session",
+                "auth_token": json.dumps(cookies),
+                "handle": "cookie_auth",
+                "name": "cookie_auth",
+                "avatar_url": ""
+            }, on_conflict="clerk_id,platform,account_type").execute()
+        except Exception as db_err:
+            await websocket.send_json({"type": "warn", "text": f"Saved in memory only — DB save failed: {str(db_err)[:60]}"})
+
+    await websocket.send_json({"type": "success", "text": "X cookies saved. Now give Spirit a scouting task to begin."})
+    return cookies
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # twikit session — lightweight HTTP-based X client, no browser required.
 # Runs in a dedicated OS thread via asyncio.run().
@@ -149,22 +197,33 @@ async def setup_login_interactive(websocket, clerk_id: str = None, supabase=None
 async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: dict):
     from twikit import Client
 
-    if not credentials or not credentials.get("username") or not credentials.get("password"):
-        log_queue.append(("error", "Not logged in to X. Type 'setup login' first."))
+    if not credentials:
+        log_queue.append(("error", "Not connected to X. Type 'setup cookies' first."))
         log_queue.append(("__results__", []))
         return
 
     client = Client('en-US')
-    log_queue.append(("info", "Connecting to X..."))
 
-    try:
-        await client.login(
-            auth_info_1=credentials["username"],
-            password=credentials["password"]
-        )
+    # Cookie auth (preferred — bypasses Cloudflare entirely)
+    if credentials.get("auth_token") and credentials.get("ct0"):
+        log_queue.append(("info", "Connecting to X with session cookies..."))
+        client.set_cookies({"auth_token": credentials["auth_token"], "ct0": credentials["ct0"]})
         log_queue.append(("success", "Connected. Searching for relevant posts..."))
-    except Exception as ex:
-        log_queue.append(("error", f"Login failed: {str(ex)[:120]}"))
+    # Username/password fallback
+    elif credentials.get("username") and credentials.get("password"):
+        log_queue.append(("info", "Connecting to X..."))
+        try:
+            await client.login(
+                auth_info_1=credentials["username"],
+                password=credentials["password"]
+            )
+            log_queue.append(("success", "Connected. Searching for relevant posts..."))
+        except Exception as ex:
+            log_queue.append(("error", f"Login failed: {str(ex)[:120]}"))
+            log_queue.append(("__results__", []))
+            return
+    else:
+        log_queue.append(("error", "No valid credentials. Type 'setup cookies' first."))
         log_queue.append(("__results__", []))
         return
 
@@ -257,16 +316,19 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
     log_queue = []
 
     # Look up stored credentials — memory first, then Supabase (survives restarts)
+    # Priority: cookie_session > playwright_session (username/password)
     store_key = clerk_id or "default"
     credentials = _stored_credentials.get(store_key)
     if not credentials and supabase and clerk_id:
-        try:
-            res = supabase.table("channel_credentials").select("auth_token").eq("clerk_id", clerk_id).eq("platform", "twitter").eq("account_type", "playwright_session").execute()
-            if res.data:
-                credentials = json.loads(res.data[0]["auth_token"])
-                _stored_credentials[store_key] = credentials  # Cache in memory
-        except Exception:
-            pass
+        for account_type in ["cookie_session", "playwright_session"]:
+            try:
+                res = supabase.table("channel_credentials").select("auth_token").eq("clerk_id", clerk_id).eq("platform", "twitter").eq("account_type", account_type).execute()
+                if res.data:
+                    credentials = json.loads(res.data[0]["auth_token"])
+                    _stored_credentials[store_key] = credentials
+                    break
+            except Exception:
+                pass
 
     thread = threading.Thread(
         target=_run_session,
