@@ -94,11 +94,11 @@ Return ONLY the JSON object. No markdown, no explanation outside it."""
     except Exception as ex:
         return {"action": "skip", "reason": f"Eval error: {str(ex)[:40]}"}
 
-async def setup_login_interactive(websocket, clerk_id: str = None) -> dict:
+async def setup_login_interactive(websocket, clerk_id: str = None, supabase=None) -> dict:
     """
     Asks the user for X/Twitter credentials interactively through the browser terminal.
     Sends 'prompt' messages and awaits 'prompt_response' replies over the WebSocket.
-    Stores credentials in _stored_credentials keyed by clerk_id for use by Playwright.
+    Stores credentials in memory AND persists to Supabase so they survive server restarts.
     Returns {"username": ..., "password": ...} or {} if the user cancels.
     """
     async def ask(field: str, label: str, masked: bool) -> str:
@@ -123,9 +123,24 @@ async def setup_login_interactive(websocket, clerk_id: str = None) -> dict:
 
     creds = {"username": username, "password": password}
 
-    # Store so Playwright can use them on the next scouting run
+    # Store in memory for this session
     store_key = clerk_id or "default"
     _stored_credentials[store_key] = creds
+
+    # Persist to Supabase so credentials survive server restarts
+    if supabase and clerk_id:
+        try:
+            supabase.table("channel_credentials").upsert({
+                "clerk_id": clerk_id,
+                "platform": "twitter",
+                "account_type": "playwright_session",
+                "auth_token": json.dumps({"username": username, "password": password}),
+                "handle": username,
+                "name": username,
+                "avatar_url": ""
+            }, on_conflict="clerk_id,platform,account_type").execute()
+        except Exception as db_err:
+            await websocket.send_json({"type": "warn", "text": f"Saved in memory only — DB save failed: {str(db_err)[:60]}"})
 
     await websocket.send_json({"type": "success", "text": f"Credentials saved for @{username}. Now give Spirit a scouting task to begin."})
     return creds
@@ -177,8 +192,19 @@ def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: di
 
             time.sleep(3)
 
-            # Check if we need to log in
-            if "login" in page.url or "i/flow" in page.url or "x.com/?logout" in page.url:
+            # Detect login state by DOM — NOT by URL.
+            # X stays on x.com/home whether logged in or not, so URL check is unreliable.
+            # The compose button only appears when logged in.
+            try:
+                page.wait_for_selector(
+                    '[data-testid="SideNav_NewTweet_Button"], input[autocomplete="username"]',
+                    timeout=10000
+                )
+            except Exception:
+                pass
+            is_logged_in = page.locator('[data-testid="SideNav_NewTweet_Button"]').count() > 0
+
+            if not is_logged_in:
                 if credentials and credentials.get("username") and credentials.get("password"):
                     log_queue.append(("info", "Not logged in — auto-logging in with stored credentials..."))
                     try:
@@ -360,8 +386,17 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
 
     log_queue = []
 
-    # Look up stored credentials for this user
-    credentials = _stored_credentials.get(clerk_id or "default")
+    # Look up stored credentials — memory first, then Supabase (survives restarts)
+    store_key = clerk_id or "default"
+    credentials = _stored_credentials.get(store_key)
+    if not credentials and supabase and clerk_id:
+        try:
+            res = supabase.table("channel_credentials").select("auth_token").eq("clerk_id", clerk_id).eq("platform", "twitter").eq("account_type", "playwright_session").execute()
+            if res.data:
+                credentials = json.loads(res.data[0]["auth_token"])
+                _stored_credentials[store_key] = credentials  # Cache in memory
+        except Exception:
+            pass
 
     thread = threading.Thread(
         target=_run_session,

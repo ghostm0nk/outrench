@@ -582,7 +582,7 @@ async def agent_stream(websocket: WebSocket):
             # Interactive login — prompts user for credentials through the terminal
             task_lower = task.strip().lower()
             if any(kw in task_lower for kw in ["setup login", "set up login", "login setup", "connect twitter", "connect x", "setup session", "login"]):
-                await setup_login_interactive(websocket, clerk_id=clerk_id)
+                await setup_login_interactive(websocket, clerk_id=clerk_id, supabase=supabase)
             else:
                 await stream_agent_logic(task, websocket, clerk_id=clerk_id, supabase=supabase)
                 
