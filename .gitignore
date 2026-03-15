@@ -29,6 +29,12 @@ nosetests.xml
 .mypy_cache/
 .tox/
 
+# Playwright / browser automation
+backend/browser_session/
+
+# Claude worktrees
+.claude/
+
 # OS/Editor
 .DS_Store
 .vscode/

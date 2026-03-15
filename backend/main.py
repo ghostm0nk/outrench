@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 # Load .env FIRST — before importing any local modules that read env vars at import time
 load_dotenv()
 
+
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,20 +79,12 @@ class SupabaseRestWrapper:
                 return Req()
             def select(self, fields="*"):
                 class Req:
-                    def __init__(self):
-                        self.params = {"select": fields}
                     def eq(self, k, v):
-                        self.params[k] = f"eq.{v}"
-                        return self
-                    def order(self, col, desc=False):
-                        self.params["order"] = f"{col}.{'desc' if desc else 'asc'}"
-                        return self
-                    def limit(self, count):
-                        self.params["limit"] = str(count)
+                        self.k, self.v = k, v
                         return self
                     def execute(self):
                         with requests.Session() as c:
-                            r = c.get(url, headers=headers, params=self.params)
+                            r = c.get(f"{url}?select={fields}&{self.k}=eq.{self.v}", headers=headers)
                             r.raise_for_status()
                             class Res:
                                 data = r.json()
@@ -532,24 +525,6 @@ async def get_market_leads(clerk_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/content/queue/{clerk_id}")
-async def get_content_queue(clerk_id: str):
-    if not supabase: raise HTTPException(status_code=500, detail="Database error")
-    try:
-        res = supabase.table("content_queue").select("*").eq("clerk_id", clerk_id).order("created_at", desc=True).limit(20).execute()
-        return {"queue": res.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/growth/trends/{clerk_id}")
-async def get_growth_trends(clerk_id: str):
-    if not supabase: raise HTTPException(status_code=500, detail="Database error")
-    try:
-        res = supabase.table("growth_trends").select("*").eq("clerk_id", clerk_id).order("created_at", desc=True).limit(20).execute()
-        return {"trends": res.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/api/channels/status/{clerk_id}")
 async def get_channel_status(clerk_id: str):
     if not supabase:
@@ -593,23 +568,27 @@ async def agent_stream(websocket: WebSocket):
     print("Agent WebSocket connected.")
     try:
         while True:
-            # Wait for user input from the frontend
             raw_data = await websocket.receive_text()
             try:
                 payload = json.loads(raw_data)
-                task = payload.get("task", "")
+                task = payload.get("task", "").strip()
                 clerk_id = payload.get("clerk_id")
             except:
-                # Fallback for old simple string messages
-                task = raw_data
+                task = raw_data.strip()
                 clerk_id = None
 
             print(f"Agent received task: {task} from {clerk_id}")
-            
-            # Use the new agent logic to plan and stream execution
-            await stream_agent_logic(task, websocket, clerk_id=clerk_id, supabase=supabase)
+
+            # Route "setup login" to interactive login setup
+            task_lower = task.lower()
+            if any(kw in task_lower for kw in ["setup login", "login setup", "connect twitter", "connect x", "setup session"]):
+                from agent_logic import setup_login_interactive
+                await setup_login_interactive(websocket)
+            else:
+                await stream_agent_logic(task, websocket, clerk_id=clerk_id, supabase=supabase)
                 
     except WebSocketDisconnect:
         print("Agent WebSocket disconnected.")
     except Exception as e:
         print(f"WebSocket error: {e}")
+

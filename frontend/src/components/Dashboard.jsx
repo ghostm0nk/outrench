@@ -12,8 +12,6 @@ const TOP_TABS = [
 ];
 
 const BOTTOM_TABS = [
-  { id: 'directory', label: 'Directory', icon: BookOpen },
-  { id: 'notes',     label: 'Notes',     icon: FileText },
   { id: 'profile',   label: 'Profile',   icon: User, isProfile: true },
 ];
 
