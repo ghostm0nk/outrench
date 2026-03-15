@@ -390,7 +390,6 @@ async def save_onboarding(req: OnboardingRequest):
         user_result = supabase.table("users").select("id").eq("clerk_id", req.clerk_id).execute()
         user_id = user_result.data[0]["id"] if user_result.data else None
 
-        # Upsert startup data
         startup_data = {
             "clerk_id": req.clerk_id,
             "user_id": user_id,
@@ -410,7 +409,13 @@ async def save_onboarding(req: OnboardingRequest):
             "bio": req.bio,
             "post_link": req.post_link,
         }
-        supabase.table("startups").upsert(startup_data, on_conflict="clerk_id").execute()
+
+        # Check if a profile already exists, then insert or update accordingly
+        existing = supabase.table("startups").select("id").eq("clerk_id", req.clerk_id).execute()
+        if existing.data:
+            supabase.table("startups").update(startup_data).eq("clerk_id", req.clerk_id).execute()
+        else:
+            supabase.table("startups").insert(startup_data).execute()
 
         # Mark user as onboarded
         supabase.table("users").update({"onboarded": True}).eq("clerk_id", req.clerk_id).execute()
