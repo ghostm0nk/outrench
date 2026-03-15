@@ -79,6 +79,38 @@ async def plan_task(user_input: str, startup_context: str = "") -> List[Dict]:
     except:
         return [{"type": "error", "text": "Plan failed. Reverting to basic scout.", "simulated_delay": 1.0}]
 
+async def setup_login_interactive(websocket) -> dict:
+    """
+    Asks the user for X/Twitter credentials interactively through the browser terminal.
+    Sends 'prompt' messages and awaits 'prompt_response' replies over the WebSocket.
+    Returns {"username": ..., "password": ...} or raises if the user cancels.
+    """
+    import json
+
+    async def ask(field: str, label: str, masked: bool) -> str:
+        await websocket.send_json({"type": "prompt", "field": field, "text": label, "masked": masked})
+        raw = await websocket.receive_text()
+        payload = json.loads(raw)
+        if payload.get("type") == "prompt_response" and payload.get("field") == field:
+            return payload.get("value", "").strip()
+        return ""
+
+    await websocket.send_json({"type": "info", "text": "Spirit needs your X credentials to operate."})
+
+    username = await ask("username", "Enter your X/Twitter username:", False)
+    if not username:
+        await websocket.send_json({"type": "error", "text": "Login cancelled — no username provided."})
+        return {}
+
+    password = await ask("password", "Enter your X/Twitter password:", True)
+    if not password:
+        await websocket.send_json({"type": "error", "text": "Login cancelled — no password provided."})
+        return {}
+
+    await websocket.send_json({"type": "success", "text": f"Credentials received for @{username}. Spirit will use these to log in."})
+    return {"username": username, "password": password}
+
+
 async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, supabase = None):
     """The main execution loop with Google Search logic and database persistence."""
     

@@ -64,6 +64,9 @@ export default function Station() {
   const [sysExpanded, setSysExpanded] = useState(false);
   const [sysDetail, setSysDetail] = useState('');
 
+  // Prompt mode — when backend asks for a credential field interactively
+  const [promptState, setPromptState] = useState({ active: false, field: null, masked: false, label: '' });
+
   const socketRef = useRef(null);
   const retryTimerRef = useRef(null);
   const retryCountRef = useRef(0);
@@ -132,6 +135,12 @@ export default function Station() {
         socket.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
+            // Backend is asking for a credential field — enter prompt mode
+            if (data.type === 'prompt') {
+              pushLine('info', data.text);
+              setPromptState({ active: true, field: data.field, masked: !!data.masked, label: data.text });
+              return;
+            }
             if (data.type && data.text) {
               pushLine(data.type, data.text);
               if (data.type === 'success') parseSaveLine(data.text);
@@ -180,15 +189,25 @@ export default function Station() {
     const cmd = input.trim();
     if (!cmd) return;
 
-    pushLine('cmd', cmd);
-    setCmdHistory(prev => [{ id: Date.now(), text: cmd, ts: Date.now() }, ...prev].slice(0, 5));
-
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ task: cmd, clerk_id: user?.id }));
-    } else {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       pushLine('error', 'Agent disconnected. Cannot send command.');
+      setInput('');
+      return;
     }
 
+    // If we're in prompt mode, send a credential response (never log the value)
+    if (promptState.active) {
+      pushLine('cmd', promptState.masked ? '••••••••' : cmd);
+      socketRef.current.send(JSON.stringify({ type: 'prompt_response', field: promptState.field, value: cmd }));
+      setPromptState({ active: false, field: null, masked: false, label: '' });
+      setInput('');
+      return;
+    }
+
+    // Normal command
+    pushLine('cmd', cmd);
+    setCmdHistory(prev => [{ id: Date.now(), text: cmd, ts: Date.now() }, ...prev].slice(0, 5));
+    socketRef.current.send(JSON.stringify({ task: cmd, clerk_id: user?.id }));
     setInput('');
   };
 
@@ -229,6 +248,7 @@ export default function Station() {
         value={input}
         onChange={setInput}
         onSubmit={handleSubmit}
+        promptState={promptState}
       />
 
     </div>
@@ -712,77 +732,98 @@ function TaskCard({ task }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Command Input (bottom)
 // ─────────────────────────────────────────────────────────────────────────────
-function CommandInput({ value, onChange, onSubmit }) {
+function CommandInput({ value, onChange, onSubmit, promptState = {} }) {
+  const isPrompt = !!promptState.active;
+  const accentColor = isPrompt ? '#818cf8' : '#f59e0b';
+
   return (
-    <form
-      onSubmit={onSubmit}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        margin: '12px 16px 16px',
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 12,
-        padding: '4px 4px 4px 14px',
-        transition: 'border-color 0.2s',
-        flexShrink: 0,
-      }}
-      onFocus={e => e.currentTarget.style.borderColor = 'rgba(99,102,241,0.45)'}
-      onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
-    >
-      {/* Prompt symbol */}
-      <span style={{
-        fontSize: 14,
-        fontFamily: '"PPSupplyMono", monospace',
-        color: '#f59e0b',
-        flexShrink: 0,
-        userSelect: 'none',
-      }}>
-        &gt;_
-      </span>
+    <div style={{ margin: '12px 16px 16px', flexShrink: 0 }}>
+      {/* Prompt label shown above input when backend is asking a question */}
+      {isPrompt && (
+        <div style={{
+          fontSize: 11,
+          fontFamily: '"PPSupplyMono", monospace',
+          color: '#818cf8',
+          marginBottom: 6,
+          paddingLeft: 4,
+          letterSpacing: '0.04em',
+        }}>
+          ← {promptState.label}
+        </div>
+      )}
 
-      <input
-        type="text"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder="Give the agent a task…"
-        style={{
-          flex: 1,
-          background: 'transparent',
-          border: 'none',
-          outline: 'none',
-          color: '#fff',
-          fontSize: 14,
-          fontFamily: '"PPSupplyMono", "Courier New", monospace',
-          letterSpacing: '0.01em',
-          caretColor: '#f59e0b',
-        }}
-      />
-
-      <button
-        type="submit"
-        disabled={!value.trim()}
+      <form
+        onSubmit={onSubmit}
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          width: 36,
-          height: 36,
-          borderRadius: 9,
-          border: 'none',
-          background: value.trim()
-            ? 'linear-gradient(135deg, #f59e0b, #d97706)'
-            : 'rgba(255,255,255,0.05)',
-          color: value.trim() ? '#fff' : 'rgba(255,255,255,0.2)',
-          cursor: value.trim() ? 'pointer' : 'not-allowed',
-          transition: 'all 0.2s',
-          flexShrink: 0,
-          boxShadow: value.trim() ? '0 0 16px rgba(245,158,11,0.35)' : 'none',
+          gap: 10,
+          background: isPrompt ? 'rgba(99,102,241,0.07)' : 'rgba(255,255,255,0.04)',
+          border: `1px solid ${isPrompt ? 'rgba(99,102,241,0.35)' : 'rgba(255,255,255,0.08)'}`,
+          borderRadius: 12,
+          padding: '4px 4px 4px 14px',
+          transition: 'border-color 0.2s',
         }}
+        onFocus={e => e.currentTarget.style.borderColor = isPrompt ? 'rgba(99,102,241,0.6)' : 'rgba(99,102,241,0.45)'}
+        onBlur={e => e.currentTarget.style.borderColor = isPrompt ? 'rgba(99,102,241,0.35)' : 'rgba(255,255,255,0.08)'}
       >
-        <Send size={15} />
-      </button>
-    </form>
+        <span style={{
+          fontSize: 14,
+          fontFamily: '"PPSupplyMono", monospace',
+          color: accentColor,
+          flexShrink: 0,
+          userSelect: 'none',
+        }}>
+          {isPrompt ? '?' : '>_'}
+        </span>
+
+        <input
+          type={isPrompt && promptState.masked ? 'password' : 'text'}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={isPrompt ? 'Type your answer and press Enter…' : 'Give the agent a task…'}
+          autoFocus={isPrompt}
+          style={{
+            flex: 1,
+            background: 'transparent',
+            border: 'none',
+            outline: 'none',
+            color: '#fff',
+            fontSize: 14,
+            fontFamily: '"PPSupplyMono", "Courier New", monospace',
+            letterSpacing: '0.01em',
+            caretColor: accentColor,
+          }}
+        />
+
+        <button
+          type="submit"
+          disabled={!value.trim()}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 36,
+            height: 36,
+            borderRadius: 9,
+            border: 'none',
+            background: value.trim()
+              ? isPrompt
+                ? 'linear-gradient(135deg, #6366f1, #4f46e5)'
+                : 'linear-gradient(135deg, #f59e0b, #d97706)'
+              : 'rgba(255,255,255,0.05)',
+            color: value.trim() ? '#fff' : 'rgba(255,255,255,0.2)',
+            cursor: value.trim() ? 'pointer' : 'not-allowed',
+            transition: 'all 0.2s',
+            flexShrink: 0,
+            boxShadow: value.trim()
+              ? isPrompt ? '0 0 16px rgba(99,102,241,0.4)' : '0 0 16px rgba(245,158,11,0.35)'
+              : 'none',
+          }}
+        >
+          <Send size={15} />
+        </button>
+      </form>
+    </div>
   );
 }
