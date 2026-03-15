@@ -36,61 +36,79 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 CLERK_WEBHOOK_SECRET = os.getenv("CLERK_WEBHOOK_SECRET")
 
+def _sb_raise(r):
+    """Raise with the actual Supabase error body, not just the status line."""
+    if not r.ok:
+        try:
+            body = r.json()
+        except Exception:
+            body = r.text
+        print(f"Supabase {r.status_code} on {r.url}: {body}")
+        raise requests.HTTPError(f"{r.status_code} {body}", response=r)
+
+
+class _SBResult:
+    def __init__(self, data): self.data = data
+
+class _SBSelect:
+    def __init__(self, url, headers, fields):
+        self._url = url; self._headers = headers; self._fields = fields; self._filters = []
+    def eq(self, k, v):
+        self._filters.append((k, v)); return self
+    def execute(self):
+        qs = f"select={self._fields}"
+        for k, v in self._filters: qs += f"&{k}=eq.{v}"
+        r = requests.get(f"{self._url}?{qs}", headers=self._headers)
+        _sb_raise(r)
+        return _SBResult(r.json())
+
+class _SBInsert:
+    def __init__(self, url, headers, data):
+        self._url = url; self._headers = headers; self._data = data
+    def execute(self):
+        _sb_raise(requests.post(self._url, headers=self._headers, json=self._data))
+
+class _SBUpdate:
+    def __init__(self, url, headers, data):
+        self._url = url; self._headers = headers; self._data = data; self._filters = []
+    def eq(self, k, v):
+        self._filters.append((k, v)); return self
+    def execute(self):
+        qs = "&".join(f"{k}=eq.{v}" for k, v in self._filters)
+        _sb_raise(requests.patch(f"{self._url}?{qs}", headers=self._headers, json=self._data))
+
+class _SBDelete:
+    def __init__(self, url, headers):
+        self._url = url; self._headers = headers; self._filters = []
+    def eq(self, k, v):
+        self._filters.append((k, v)); return self
+    def execute(self):
+        qs = "&".join(f"{k}=eq.{v}" for k, v in self._filters)
+        _sb_raise(requests.delete(f"{self._url}?{qs}", headers=self._headers))
+
+class _SBUpsert:
+    def __init__(self, url, headers, data, on_conflict):
+        self._url = url; self._headers = headers; self._data = data; self._on_conflict = on_conflict
+    def execute(self):
+        h = {**self._headers, "Prefer": "resolution=merge-duplicates"}
+        _sb_raise(requests.post(f"{self._url}?on_conflict={self._on_conflict}", headers=h, json=self._data))
+
+class _SBTable:
+    def __init__(self, url, headers):
+        self._url = url; self._headers = headers
+    def select(self, fields="*"): return _SBSelect(self._url, self._headers, fields)
+    def insert(self, data):       return _SBInsert(self._url, self._headers, data)
+    def update(self, data):       return _SBUpdate(self._url, self._headers, data)
+    def delete(self):             return _SBDelete(self._url, self._headers)
+    def upsert(self, data, on_conflict="id"): return _SBUpsert(self._url, self._headers, data, on_conflict)
+
 class SupabaseRestWrapper:
     def __init__(self, url, key):
         self.base_url = f"{url}/rest/v1"
         self.headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
     def table(self, name):
-        url = f"{self.base_url}/{name}"
-        headers = self.headers
-        class TableWrapper:
-            def insert(self, data):
-                class Req:
-                    def execute(self):
-                        with requests.Session() as c:
-                            return c.post(url, headers=headers, json=data).raise_for_status()
-                return Req()
-            def update(self, data):
-                class Req:
-                    def eq(self, k, v):
-                        self.k, self.v = k, v
-                        return self
-                    def execute(self):
-                        with requests.Session() as c:
-                            return c.patch(f"{url}?{self.k}=eq.{self.v}", headers=headers, json=data).raise_for_status()
-                return Req()
-            def delete(self):
-                class Req:
-                    def eq(self, k, v):
-                        self.k, self.v = k, v
-                        return self
-                    def execute(self):
-                        with requests.Session() as c:
-                            return c.delete(f"{url}?{self.k}=eq.{self.v}", headers=headers).raise_for_status()
-                return Req()
-            def upsert(self, data, on_conflict="id"):
-                class Req:
-                    def execute(self):
-                        h = headers.copy()
-                        h["Prefer"] = "resolution=merge-duplicates"
-                        with requests.Session() as c:
-                            return c.post(f"{url}?on_conflict={on_conflict}", headers=h, json=data).raise_for_status()
-                return Req()
-            def select(self, fields="*"):
-                class Req:
-                    def eq(self, k, v):
-                        self.k, self.v = k, v
-                        return self
-                    def execute(self):
-                        with requests.Session() as c:
-                            r = c.get(f"{url}?select={fields}&{self.k}=eq.{self.v}", headers=headers)
-                            r.raise_for_status()
-                            class Res:
-                                data = r.json()
-                            return Res()
-                return Req()
-        return TableWrapper()
+        return _SBTable(f"{self.base_url}/{name}", self.headers)
 
 supabase = None
 if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
@@ -384,6 +402,7 @@ async def save_onboarding(req: OnboardingRequest):
         return {"status": "rejected", "reason": rejection_reason}
 
     try:
+        print(f"Onboarding payload: clerk_id={req.clerk_id} account_type={req.account_type} platform={req.platform} handle={req.handle}")
         is_product = req.account_type == "product"
 
         if is_product:
