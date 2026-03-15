@@ -4,7 +4,6 @@ import { Loader2, Sparkles, X, Mail, Lock, Eye, EyeOff, User, Send } from 'lucid
 import axios from 'axios';
 import outrenchLogo from './assets/outrench.png';
 import Dashboard from './components/Dashboard';
-import Onboarding from './components/Onboarding';
 
 // Lazy-load the heavy Three.js component so it doesn't block the dashboard
 const SpectralGhost = lazy(() => import('./components/SpectralGhost'));
@@ -439,45 +438,6 @@ function App() {
 
 // ── Signed-In Router: checks onboarding status ──────────────────────────────
 function SignedInRouter() {
-  const { user } = useUser();
-  const [onboarded, setOnboarded] = useState(null); // null = loading, true/false = result
-
-  useEffect(() => {
-    if (!user) return;
-    const checkOnboarding = async () => {
-      try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-        const res = await axios.get(`${apiUrl}/api/onboarding/status/${user.id}`);
-        setOnboarded(res.data.onboarded);
-      } catch (err) {
-        console.error('Failed to check onboarding status:', err);
-        // Default to Dashboard (true) on network/backend errors.
-        // Only show Onboarding if the backend explicitly says onboarded=false.
-        setOnboarded(true);
-      }
-    };
-    checkOnboarding();
-  }, [user]);
-
-  // Loading state
-  if (onboarded === null) {
-    return (
-      <div style={{
-        minHeight: '100vh', background: '#0a0a0a',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <Loader2 size={32} style={{ color: '#6366f1', animation: 'spin 1s linear infinite' }} />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
-  }
-
-  // Not onboarded → show questionnaire
-  if (!onboarded) {
-    return <Onboarding onComplete={() => setOnboarded(true)} />;
-  }
-
-  // Onboarded → show dashboard
   return <Dashboard />;
 }
 

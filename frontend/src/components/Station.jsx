@@ -129,7 +129,10 @@ export default function Station() {
           setSysStatus('ok');
           setSysMessage('Presence Active');
           setSysDetail('');
-          pushLine('info', 'Spirit connection established.');
+          pushLine('ai_response', 'Ghost Driver online. I am your autonomous growth analyst.');
+          pushLine('info', 'I can browse X/Twitter and TikTok — reading feeds, following people, and identifying leads — exactly like a senior market analyst would.');
+          pushLine('info', 'Tell me which platform to start on and what kind of people to find.');
+          pushLine('cmd', 'Example: "Go to X and find founders talking about SaaS struggles"');
         };
 
         socket.onmessage = (event) => {
