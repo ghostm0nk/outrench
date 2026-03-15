@@ -289,9 +289,17 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
 
     thread.join(timeout=5)
 
-    # 3. Save results to DB as leads
+    # 3. Save results to DB and stream each lead to frontend
     saved = 0
     for r in results:
+        # Stream structured lead card to frontend
+        await websocket.send_json({
+            "type": "lead",
+            "handle": r["handle"],
+            "content": r["content"],
+            "action": r["action"],
+            "reason": r["reason"],
+        })
         if supabase and clerk_id:
             try:
                 supabase.table("market_leads").insert({

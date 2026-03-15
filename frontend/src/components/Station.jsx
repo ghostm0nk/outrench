@@ -30,6 +30,7 @@ export default function Station() {
 
   // Terminal lines shape: [{ id, timestamp, type, text }]
   const [lines, setLines] = useState([]);
+  const [leads, setLeads] = useState([]);
 
   const pushLine = useCallback((type, text) => {
     setLines(prev => [
@@ -144,6 +145,10 @@ export default function Station() {
               setPromptState({ active: true, field: data.field, masked: !!data.masked, label: data.text });
               return;
             }
+            if (data.type === 'lead') {
+              setLeads(prev => [data, ...prev]);
+              return;
+            }
             if (data.type && data.text) {
               pushLine(data.type, data.text);
               if (data.type === 'success') parseSaveLine(data.text);
@@ -242,8 +247,8 @@ export default function Station() {
         {/* Left: Terminal */}
         <TerminalPanel lines={lines} />
 
-        {/* Right: Session Scoreboard */}
-        <ResultsPanel stats={sessionStats} history={cmdHistory} />
+        {/* Right: Session Results */}
+        <ResultsPanel stats={sessionStats} history={cmdHistory} leads={leads} />
       </div>
 
       {/* ── Command Input ── */}
@@ -583,8 +588,47 @@ function Stat({ label, value, color, icon }) {
   );
 }
 
-function ResultsPanel({ stats = { leads: 0, drafts: 0, trends: 0, runs: 0 }, history = [] }) {
-  const isEmpty = stats.leads === 0 && stats.drafts === 0 && stats.trends === 0;
+const ACTION_STYLE = {
+  like:            { color: '#f472b6', bg: 'rgba(244,114,182,0.08)', border: 'rgba(244,114,182,0.2)', label: '♥ Liked' },
+  follow:          { color: '#818cf8', bg: 'rgba(129,140,248,0.08)', border: 'rgba(129,140,248,0.2)', label: '+ Followed' },
+  like_and_follow: { color: '#34d399', bg: 'rgba(52,211,153,0.08)', border: 'rgba(52,211,153,0.2)', label: '♥ + Followed' },
+};
+
+function LeadCard({ lead }) {
+  const style = ACTION_STYLE[lead.action] || ACTION_STYLE.like;
+  return (
+    <div style={{
+      background: style.bg,
+      border: `1px solid ${style.border}`,
+      borderRadius: 10,
+      padding: '10px 12px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#fff' }}>{lead.handle}</span>
+        <span style={{
+          fontSize: 9,
+          fontFamily: '"PPSupplyMono", monospace',
+          color: style.color,
+          background: `${style.color}18`,
+          border: `1px solid ${style.color}30`,
+          borderRadius: 999,
+          padding: '2px 7px',
+          flexShrink: 0,
+        }}>{style.label}</span>
+      </div>
+      <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', margin: 0, lineHeight: 1.5, wordBreak: 'break-word' }}>
+        {lead.content?.slice(0, 120)}{lead.content?.length > 120 ? '…' : ''}
+      </p>
+      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', fontStyle: 'italic' }}>{lead.reason}</span>
+    </div>
+  );
+}
+
+function ResultsPanel({ stats = { leads: 0, drafts: 0, trends: 0, runs: 0 }, leads = [] }) {
+  const isEmpty = leads.length === 0;
 
   return (
     <div style={{
@@ -615,26 +659,27 @@ function ResultsPanel({ stats = { leads: 0, drafts: 0, trends: 0, runs: 0 }, his
           color: 'rgba(255,255,255,0.3)',
           letterSpacing: '0.05em',
         }}>
-          session results
+          scouted leads
         </span>
-        {stats.runs > 0 && (
+        {leads.length > 0 && (
           <div style={{
             marginLeft: 'auto',
-            background: 'rgba(16,185,129,0.12)',
-            border: '1px solid rgba(16,185,129,0.25)',
+            background: 'rgba(129,140,248,0.12)',
+            border: '1px solid rgba(129,140,248,0.25)',
             borderRadius: 999,
             padding: '2px 8px',
             fontSize: 10,
             fontFamily: '"PPSupplyMono", monospace',
-            color: '#10b981',
+            color: '#818cf8',
           }}>
-            {stats.runs} run{stats.runs !== 1 ? 's' : ''}
+            {leads.length} found
           </div>
         )}
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
+        scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.06) transparent' }}>
         {isEmpty ? (
           <div style={{
             flex: 1,
@@ -647,49 +692,14 @@ function ResultsPanel({ stats = { leads: 0, drafts: 0, trends: 0, runs: 0 }, his
           }}>
             <BarChart2 size={32} strokeWidth={1} />
             <span style={{ fontSize: 11, fontFamily: '"PPSupplyMono", monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              No results yet
+              No leads yet
             </span>
             <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.08)', textAlign: 'center' }}>
-              Give Spirit a task to start scouting
+              Give Spirit a scouting task
             </span>
           </div>
         ) : (
-          <>
-            {/* Stats grid */}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Stat label="Leads" value={stats.leads} color="#818cf8" icon="👤" />
-              <Stat label="Drafts" value={stats.drafts} color="#fbbf24" icon="✍️" />
-              <Stat label="Trends" value={stats.trends} color="#10b981" icon="📈" />
-            </div>
-
-            {/* Command history */}
-            {history.length > 0 && (
-              <div>
-                <div style={{ fontSize: 9, fontFamily: '"PPSupplyMono", monospace', color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-                  Commands this session
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {history.map(h => (
-                    <div key={h.id} style={{
-                      fontSize: 11,
-                      fontFamily: '"PPSupplyMono", monospace',
-                      color: 'rgba(255,255,255,0.4)',
-                      background: 'rgba(255,255,255,0.02)',
-                      border: '1px solid rgba(255,255,255,0.04)',
-                      borderRadius: 6,
-                      padding: '6px 10px',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}>
-                      <span style={{ color: '#fdba74', marginRight: 6 }}>$</span>
-                      {h.text}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
+          leads.map((lead, i) => <LeadCard key={i} lead={lead} />)
         )}
       </div>
     </div>
