@@ -2,16 +2,11 @@ import json
 import os
 import requests
 import asyncio
-import traceback
 import threading
-import time
 from typing import List, Dict
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-
-# Where we save the browser session so the user only logs in once
-SESSION_DIR = os.path.join(os.path.dirname(__file__), "browser_session")
 
 # In-memory credentials store: {clerk_id: {"username": ..., "password": ...}}
 # Ephemeral — cleared on server restart. User must run "setup login" again after redeploy.
@@ -148,228 +143,103 @@ async def setup_login_interactive(websocket, clerk_id: str = None, supabase=None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Playwright runs as a pure sync session in a dedicated OS thread.
-# Uses sync_playwright — no event loop, no Windows asyncio conflict.
+# twikit session — lightweight HTTP-based X client, no browser required.
+# Runs in a dedicated OS thread via asyncio.run().
 # ─────────────────────────────────────────────────────────────────────────────
-def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: dict = None):
-    from playwright.sync_api import sync_playwright
-    import os
+async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: dict):
+    from twikit import Client
 
-    os.makedirs(SESSION_DIR, exist_ok=True)
+    if not credentials or not credentials.get("username") or not credentials.get("password"):
+        log_queue.append(("error", "Not logged in to X. Type 'setup login' first."))
+        log_queue.append(("__results__", []))
+        return
 
-    # Use headless=True on cloud (Render has no display). Set PLAYWRIGHT_HEADLESS=0 locally to watch.
-    headless = os.getenv("PLAYWRIGHT_HEADLESS", "1") != "0"
+    client = Client('en-US')
+    log_queue.append(("info", "Connecting to X..."))
 
     try:
-        with sync_playwright() as p:
-            # Use persistent context — saves login cookies between runs
-            context = p.chromium.launch_persistent_context(
-                SESSION_DIR,
-                headless=headless,
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--no-first-run',
-                    '--no-default-browser-check',
-                ],
-                user_agent=(
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                    'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/120.0.0.0 Safari/537.36'
-                ),
-                viewport={'width': 1280, 'height': 800}
-            )
-
-            page = context.new_page() if len(context.pages) == 0 else context.pages[0]
-
-            log_queue.append(("info", "Navigating to X/Twitter home..."))
-            try:
-                page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
-            except Exception:
-                pass
-
-            time.sleep(3)
-
-            # Detect login state by DOM — NOT by URL.
-            # X stays on x.com/home whether logged in or not, so URL check is unreliable.
-            # The compose button only appears when logged in.
-            try:
-                page.wait_for_selector(
-                    '[data-testid="SideNav_NewTweet_Button"], input[autocomplete="username"]',
-                    timeout=10000
-                )
-            except Exception:
-                pass
-            is_logged_in = page.locator('[data-testid="SideNav_NewTweet_Button"]').count() > 0
-
-            if not is_logged_in:
-                if credentials and credentials.get("username") and credentials.get("password"):
-                    log_queue.append(("info", "Not logged in — auto-logging in with stored credentials..."))
-                    try:
-                        # Step 1: Enter username
-                        page.goto("https://x.com/i/flow/login", wait_until="domcontentloaded", timeout=20000)
-                        time.sleep(2)
-                        username_input = page.locator('input[autocomplete="username"]').first
-                        username_input.wait_for(timeout=8000)
-                        username_input.fill(credentials["username"])
-                        page.keyboard.press("Enter")
-                        time.sleep(2)
-
-                        # Step 2: Enter password (may need to skip "enter phone/email" step)
-                        password_input = page.locator('input[type="password"]').first
-                        if password_input.count() == 0:
-                            # X sometimes asks for email/phone first — skip by re-entering username
-                            extra = page.locator('input[data-testid="ocfEnterTextTextInput"]').first
-                            if extra.count() > 0:
-                                extra.fill(credentials["username"])
-                                page.keyboard.press("Enter")
-                                time.sleep(2)
-                            password_input = page.locator('input[type="password"]').first
-
-                        password_input.wait_for(timeout=8000)
-                        password_input.fill(credentials["password"])
-                        page.keyboard.press("Enter")
-                        time.sleep(4)
-
-                        # Wait for redirect to home
-                        deadline = time.time() + 30
-                        while time.time() < deadline:
-                            if "home" in page.url:
-                                break
-                            time.sleep(1)
-                        else:
-                            log_queue.append(("error", "Auto-login failed — wrong credentials or X blocked the login. Try 'setup login' again."))
-                            context.close()
-                            log_queue.append(("__results__", []))
-                            return
-
-                        log_queue.append(("success", "Logged in successfully."))
-                        time.sleep(2)
-
-                    except Exception as login_ex:
-                        log_queue.append(("error", f"Auto-login error: {str(login_ex)[:100]}"))
-                        context.close()
-                        log_queue.append(("__results__", []))
-                        return
-                else:
-                    log_queue.append(("error", "Not logged in to X. Type 'setup login' first to connect your account."))
-                    context.close()
-                    log_queue.append(("__results__", []))
-                    return
-
-            log_queue.append(("success", "Logged in. Reading home feed..."))
-            
-            # Scroll down a bit to load more posts
-            page.evaluate("window.scrollBy(0, 300)")
-            time.sleep(1.5)
-
-            # Grab posts from the feed
-            tweet_locator = page.locator('article[data-testid="tweet"]')
-            
-            # Wait for feed to have posts
-            try:
-                page.wait_for_selector('article[data-testid="tweet"]', timeout=10000)
-            except Exception:
-                log_queue.append(("warn", "Feed took too long to load. Try again."))
-                context.close()
-                log_queue.append(("__results__", []))
-                return
-
-            count = tweet_locator.count()
-            log_queue.append(("info", f"Found {count} posts in feed. Analyzing with AI..."))
-
-            results = []
-
-            for idx in range(min(num_posts, count)):
-                try:
-                    tweet = tweet_locator.nth(idx)
-
-                    # Get post text
-                    text_el = tweet.locator('[data-testid="tweetText"]')
-                    post_text = text_el.inner_text(timeout=2000) if text_el.count() > 0 else "(no text)"
-
-                    # Get author handle
-                    handle_el = tweet.locator('[data-testid="User-Name"] a[href*="/"]').first
-                    profile_url = handle_el.get_attribute("href", timeout=2000) if handle_el.count() > 0 else ""
-                    handle = f"@{profile_url.strip('/').split('/')[-1]}" if profile_url else f"@user_{idx}"
-
-                    preview = post_text[:70].replace('\n', ' ')
-                    log_queue.append(("info", f"Evaluating [{idx+1}/{min(num_posts, count)}] {handle}: \"{preview}...\""))
-
-                    # Ask LLM what to do with this post
-                    decision = _evaluate_post(post_text, goal)
-                    action = decision.get("action", "skip")
-                    reason = decision.get("reason", "")
-
-                    if action == "skip":
-                        log_queue.append(("warn", f"  → Skip — {reason}"))
-                        time.sleep(0.3)
-                        continue
-
-                    log_queue.append(("cmd", f"  → {action.upper()} — {reason}"))
-
-                    # Execute the action
-                    if "like" in action:
-                        try:
-                            like_btn = tweet.locator('[data-testid="like"]')
-                            if like_btn.count() > 0:
-                                like_btn.first.click()
-                                time.sleep(0.8)
-                                log_queue.append(("success", f"  ✓ Liked {handle}"))
-                        except Exception as ex:
-                            log_queue.append(("warn", f"  Like failed: {str(ex)[:40]}"))
-
-                    if "follow" in action:
-                        try:
-                            # Click through to their profile to follow
-                            handle_el.first.click()
-                            time.sleep(2)
-                            
-                            follow_btn = page.locator('[data-testid="placementTracking"] [data-testid*="follow"]').filter(has_text="Follow").first
-                            if follow_btn.count() > 0:
-                                follow_btn.click()
-                                time.sleep(1)
-                                log_queue.append(("success", f"  ✓ Followed {handle}"))
-                            
-                            # Go back to feed
-                            page.go_back()
-                            time.sleep(2)
-                            
-                            # Re-anchor tweet locator after navigation
-                            tweet_locator = page.locator('article[data-testid="tweet"]')
-                        except Exception as ex:
-                            log_queue.append(("warn", f"  Follow failed: {str(ex)[:40]}"))
-                            try:
-                                page.go_back()
-                                time.sleep(2)
-                                tweet_locator = page.locator('article[data-testid="tweet"]')
-                            except Exception:
-                                pass
-
-                    results.append({
-                        "handle": handle,
-                        "content": post_text[:300],
-                        "action": action,
-                        "reason": reason
-                    })
-
-                    time.sleep(1.0)  # Natural pacing
-
-                except Exception as ex:
-                    log_queue.append(("warn", f"Skipped post #{idx+1}: {str(ex)[:60]}"))
-
-            log_queue.append(("info", "Closing browser..."))
-            context.close()
-            log_queue.append(("__results__", results))
-
+        await client.login(
+            auth_info_1=credentials["username"],
+            password=credentials["password"]
+        )
+        log_queue.append(("success", "Connected. Searching for relevant posts..."))
     except Exception as ex:
-        tb = traceback.format_exc()
-        print(f"[PLAYWRIGHT THREAD ERROR]\n{tb}")
-        error_name = str(ex) if str(ex) else type(ex).__name__
-        log_queue.append(("error", f"Session error: {error_name}"))
+        log_queue.append(("error", f"Login failed: {str(ex)[:120]}"))
         log_queue.append(("__results__", []))
+        return
+
+    try:
+        tweets = await client.search_tweet(goal, product='Latest', count=num_posts * 2)
+        tweet_list = list(tweets)[:num_posts]
+    except Exception as ex:
+        log_queue.append(("warn", f"Search failed, trying home timeline..."))
+        try:
+            tweets = await client.get_home_timeline(count=num_posts * 2)
+            tweet_list = list(tweets)[:num_posts]
+        except Exception as ex2:
+            log_queue.append(("error", f"Could not fetch posts: {str(ex2)[:80]}"))
+            log_queue.append(("__results__", []))
+            return
+
+    log_queue.append(("info", f"Found {len(tweet_list)} posts. Analyzing with AI..."))
+
+    loop = asyncio.get_event_loop()
+    results = []
+
+    for idx, tweet in enumerate(tweet_list):
+        try:
+            post_text = getattr(tweet, 'text', None) or getattr(tweet, 'full_text', None) or "(no text)"
+            user = getattr(tweet, 'user', None)
+            handle = f"@{user.screen_name}" if user else f"@user_{idx}"
+
+            preview = post_text[:70].replace('\n', ' ')
+            log_queue.append(("info", f"Evaluating [{idx+1}/{len(tweet_list)}] {handle}: \"{preview}...\""))
+
+            decision = await loop.run_in_executor(None, _evaluate_post, post_text, goal)
+            action = decision.get("action", "skip")
+            reason = decision.get("reason", "")
+
+            if action == "skip":
+                log_queue.append(("warn", f"  → Skip — {reason}"))
+                await asyncio.sleep(0.5)
+                continue
+
+            log_queue.append(("cmd", f"  → {action.upper()} — {reason}"))
+
+            if "like" in action:
+                try:
+                    await tweet.favorite()
+                    log_queue.append(("success", f"  ✓ Liked {handle}"))
+                    await asyncio.sleep(1.0)
+                except Exception as ex:
+                    log_queue.append(("warn", f"  Like failed: {str(ex)[:50]}"))
+
+            if "follow" in action and user:
+                try:
+                    await client.follow_user(user.id)
+                    log_queue.append(("success", f"  ✓ Followed {handle}"))
+                    await asyncio.sleep(1.5)
+                except Exception as ex:
+                    log_queue.append(("warn", f"  Follow failed: {str(ex)[:50]}"))
+
+            results.append({
+                "handle": handle,
+                "content": post_text[:300],
+                "action": action,
+                "reason": reason
+            })
+
+            await asyncio.sleep(1.0)
+
+        except Exception as ex:
+            log_queue.append(("warn", f"Skipped post #{idx+1}: {str(ex)[:60]}"))
+
+    log_queue.append(("__results__", results))
+
+
+def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: dict = None):
+    """Entry point called from the OS thread — runs twikit async session."""
+    asyncio.run(_run_twikit(goal, log_queue, num_posts, credentials))
 
 
 async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, supabase=None):
@@ -382,7 +252,7 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
     # 1. Acknowledge
     await websocket.send_json({"type": "ai_response", "text": f"Ghost Driver activated. Mission: '{user_input}'"})
     await asyncio.sleep(0.3)
-    await websocket.send_json({"type": "info", "text": "Spawning browser session..."})
+    await websocket.send_json({"type": "info", "text": "Initializing X session..."})
 
     log_queue = []
 
