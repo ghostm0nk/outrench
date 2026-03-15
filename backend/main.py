@@ -607,7 +607,8 @@ async def agent_stream(websocket: WebSocket):
             print(f"Agent received task: {task} from {clerk_id}")
 
             # Interactive login — prompts user for credentials through the terminal
-            if task.strip().lower() == "setup login":
+            _task_lower = task.strip().lower()
+            if _task_lower in ("setup login", "set up login", "login", "connect twitter", "connect x"):
                 await setup_login_interactive(websocket)
                 continue
 
