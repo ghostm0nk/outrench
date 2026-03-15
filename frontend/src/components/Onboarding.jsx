@@ -1,165 +1,341 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useUser } from '@clerk/clerk-react';
-import { Send, Loader2 } from 'lucide-react';
+import { Send, Loader2, Plus, X as XIcon } from 'lucide-react';
 import axios from 'axios';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-// ── Onboarding questions ──────────────────────────────────────────────────────
-const STEPS = [
-  {
-    field: 'name',
-    question: "Let's get you set up. What's your startup called?",
-    hint: 'e.g. Acme Inc.',
-  },
-  {
-    field: 'one_liner',
-    question: "Give me a one-liner — what does it do?",
-    hint: 'e.g. AI-powered invoicing for freelancers',
-  },
-  {
-    field: 'target_audience',
-    question: "Who are you trying to reach? Be specific.",
-    hint: 'e.g. Indie hackers, B2B SaaS founders, early-stage CTOs',
-  },
-  {
-    field: 'problem_solved',
-    question: "What pain are you solving for them?",
-    hint: 'e.g. Chasing unpaid invoices wastes 5+ hours a week',
-  },
-  {
-    field: 'unique_value',
-    question: "What makes you different from existing solutions?",
-    hint: 'e.g. Automated follow-ups with a human tone, not generic templates',
-  },
-  {
-    field: 'tone',
-    question: "How should I sound when posting or commenting in your voice?",
-    hint: 'e.g. Direct and witty, like a smart founder — no corporate fluff',
-  },
-  {
-    field: 'account_types',
-    question: "Which X accounts do you want me to operate?\n\nType: personal, product, or both",
-    hint: 'personal / product / both',
-    options: ['personal', 'product', 'both'],
-  },
-  {
-    field: 'mode',
-    question: "What should I focus on first?\n\nType: growth (likes/follows), content (posting), or both",
-    hint: 'growth / content / both',
-    options: ['growth', 'content', 'both'],
-  },
+const PLATFORMS = [
+  { id: 'twitter',   label: 'Twitter / X' },
+  { id: 'instagram', label: 'Instagram' },
+  { id: 'linkedin',  label: 'LinkedIn' },
 ];
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Main Component ─────────────────────────────────────────────────────────────
 export default function Onboarding({ onComplete }) {
   const { user } = useUser();
-  const [lines, setLines] = useState([]);
-  const [input, setInput] = useState('');
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState({});
-  const [done, setDone] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [lines, setLines]       = useState([]);
+  const [phase, setPhase]       = useState('account_type');
+  const [data, setData]         = useState({
+    account_type: '', platform: '', handle: '',
+    followed_accounts: [], bio: '', post_link: '',
+  });
+  const [analysis, setAnalysis] = useState(null);
+  const [input, setInput]       = useState('');
+  const [followInput, setFollowInput] = useState('');
+  const [saving, setSaving]     = useState(false);
   const bottomRef = useRef(null);
-  const inputRef = useRef(null);
+  const inputRef  = useRef(null);
 
   const pushLine = useCallback((type, text) => {
     setLines(prev => [...prev, { id: Date.now() + Math.random(), type, text }]);
   }, []);
-
-  // Greet + first question on mount
-  useEffect(() => {
-    const delay = (ms) => new Promise(r => setTimeout(r, ms));
-    (async () => {
-      await delay(400);
-      pushLine('ai', "I'm Spirit — your autonomous growth operator.");
-      await delay(700);
-      pushLine('ai', "Before I start working for you, I need to know who I'm working for.");
-      await delay(600);
-      pushLine('ai', STEPS[0].question);
-    })();
-  }, [pushLine]);
 
   // Scroll to bottom on new lines
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [lines.length]);
 
-  // Focus input after each question
+  // Focus text input when phase needs it
   useEffect(() => {
-    if (!done) inputRef.current?.focus();
-  }, [step, done]);
+    if (['handle', 'bio', 'post'].includes(phase)) {
+      setTimeout(() => inputRef.current?.focus(), 120);
+    }
+  }, [phase]);
 
-  const handleSubmit = async (e) => {
+  // Greeting
+  useEffect(() => {
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    (async () => {
+      await delay(400);
+      pushLine('ai', "I'm Spirit — your autonomous growth operator.");
+      await delay(700);
+      pushLine('ai', "Before I start working, I need to understand who I'm working for.");
+      await delay(600);
+      pushLine('ai', "Are you growing a personal brand or a product account?");
+    })();
+  }, [pushLine]);
+
+  // ── Phase handlers ─────────────────────────────────────────────────────────
+
+  const selectAccountType = (type) => {
+    pushLine('user', type === 'personal' ? 'Personal brand' : 'Product account');
+    setData(d => ({ ...d, account_type: type }));
+    setTimeout(() => {
+      pushLine('ai', "Which platform are you focusing on?");
+      setPhase('platform');
+    }, 350);
+  };
+
+  const selectPlatform = (platformId) => {
+    const label = PLATFORMS.find(p => p.id === platformId)?.label || platformId;
+    pushLine('user', label);
+    setData(d => ({ ...d, platform: platformId }));
+    setTimeout(() => {
+      pushLine('ai', `What's your handle on ${label}?`);
+      setPhase('handle');
+    }, 350);
+  };
+
+  const submitHandle = (e) => {
+    e.preventDefault();
+    const val = input.trim().replace(/^@/, '');
+    if (!val) return;
+    pushLine('user', `@${val}`);
+    setData(d => ({ ...d, handle: val }));
+    setInput('');
+    setTimeout(() => {
+      pushLine('ai', "Add up to 5 accounts you follow or admire. These help me understand your space.");
+      setPhase('following');
+    }, 350);
+  };
+
+  const addFollowed = (e) => {
+    e.preventDefault();
+    const val = followInput.trim().replace(/^@/, '');
+    if (!val || data.followed_accounts.length >= 5) return;
+    setData(d => ({ ...d, followed_accounts: [...d.followed_accounts, val] }));
+    setFollowInput('');
+  };
+
+  const removeFollowed = (idx) => {
+    setData(d => ({ ...d, followed_accounts: d.followed_accounts.filter((_, i) => i !== idx) }));
+  };
+
+  const continueFromFollowing = () => {
+    if (data.followed_accounts.length === 0) {
+      pushLine('warn', "Add at least one account to continue.");
+      return;
+    }
+    pushLine('user', data.followed_accounts.map(a => `@${a}`).join(', '));
+    setTimeout(() => {
+      pushLine('ai', "Paste your bio exactly as it appears on your profile.");
+      setPhase('bio');
+    }, 350);
+  };
+
+  const submitBio = (e) => {
     e.preventDefault();
     const val = input.trim();
-    if (!val || saving) return;
-
-    const current = STEPS[step];
-
-    // Validate option-constrained steps
-    if (current.options) {
-      const valid = current.options.includes(val.toLowerCase());
-      if (!valid) {
-        pushLine('warn', `Please type one of: ${current.options.join(', ')}`);
-        setInput('');
-        return;
-      }
-    }
-
-    pushLine('user', val);
+    if (!val) return;
+    pushLine('user', val.length > 100 ? val.slice(0, 100) + '...' : val);
+    setData(d => ({ ...d, bio: val }));
     setInput('');
+    setTimeout(() => {
+      pushLine('ai', "Drop a link to a recent post. Skip if you haven't posted yet.");
+      setPhase('post');
+    }, 350);
+  };
 
-    const newAnswers = { ...answers, [current.field]: val };
-    setAnswers(newAnswers);
+  const submitPost = async (skip = false) => {
+    const val = skip ? '' : input.trim();
+    pushLine('user', skip ? '(skip)' : val || '(skip)');
+    const finalData = { ...data, post_link: val };
+    setData(finalData);
+    setInput('');
+    setTimeout(async () => {
+      pushLine('ai', "Analyzing your profile...");
+      setPhase('analyzing');
+      try {
+        const res = await axios.post(`${API}/api/onboarding/analyze`, {
+          clerk_id: user.id,
+          platform: finalData.platform,
+          handle: finalData.handle,
+          account_type: finalData.account_type,
+          followed_accounts: finalData.followed_accounts,
+          bio: finalData.bio,
+          post_link: finalData.post_link,
+        });
+        setAnalysis(res.data.analysis);
+        pushLine('ai', `Here's what I understood:\n\n${res.data.analysis.summary}`);
+        setPhase('summary');
+      } catch (err) {
+        pushLine('error', "Analysis failed. Let's try again.");
+        setPhase('bio');
+      }
+    }, 350);
+  };
 
-    const nextStep = step + 1;
-
-    if (nextStep < STEPS.length) {
-      // Small delay so it feels conversational
-      setTimeout(() => {
-        pushLine('ai', STEPS[nextStep].question);
-        setStep(nextStep);
-      }, 350);
-    } else {
-      // All questions answered
-      setStep(nextStep);
-      setTimeout(async () => {
-        pushLine('ai', "Got it. Setting up your profile...");
-        setSaving(true);
-        try {
-          await axios.post(`${API}/api/onboarding`, {
-            clerk_id: user.id,
-            name: newAnswers.name,
-            one_liner: newAnswers.one_liner,
-            target_audience: newAnswers.target_audience,
-            problem_solved: newAnswers.problem_solved,
-            unique_value: newAnswers.unique_value,
-            tone: newAnswers.tone,
-            account_types: newAnswers.account_types,
-            mode: newAnswers.mode,
-          });
-          pushLine('success', `Profile saved. Spirit is ready to work for ${newAnswers.name}.`);
-          setDone(true);
-        } catch (err) {
-          const msg = err.response?.data?.detail || 'Failed to save profile. Try again.';
-          pushLine('error', msg);
-          setError(msg);
-          setSaving(false);
-          // Rewind to let them retry
-          setStep(STEPS.length - 1);
-        }
-      }, 400);
+  const confirm = async () => {
+    setSaving(true);
+    pushLine('ai', "Saving your profile...");
+    try {
+      await axios.post(`${API}/api/onboarding`, {
+        clerk_id: user.id,
+        name: data.handle,
+        one_liner: analysis?.space || '',
+        target_audience: analysis?.target_audience || '',
+        problem_solved: analysis?.problem_solved || '',
+        unique_value: '',
+        tone: analysis?.tone || 'direct and genuine',
+        account_types: data.account_type,
+        mode: 'growth',
+        platform: data.platform,
+        handle: data.handle,
+        followed_accounts: JSON.stringify(data.followed_accounts),
+        bio: data.bio,
+        post_link: data.post_link,
+      });
+      pushLine('success', "You're set. Spirit is ready to work.");
+      setPhase('done');
+    } catch (err) {
+      pushLine('error', err.response?.data?.detail || 'Save failed. Try again.');
+      setSaving(false);
     }
   };
 
-  const currentStep = STEPS[step];
-  const placeholder = done
-    ? ''
-    : saving
-    ? 'Saving...'
-    : currentStep?.hint || 'Type your answer...';
+  // ── Input area by phase ────────────────────────────────────────────────────
+  const renderInput = () => {
+    if (phase === 'account_type') return (
+      <ChoiceRow>
+        <ChoiceBtn onClick={() => selectAccountType('personal')}>Personal Brand</ChoiceBtn>
+        <ChoiceBtn onClick={() => selectAccountType('product')}>Product Account</ChoiceBtn>
+      </ChoiceRow>
+    );
+
+    if (phase === 'platform') return (
+      <ChoiceRow>
+        {PLATFORMS.map(p => (
+          <ChoiceBtn key={p.id} onClick={() => selectPlatform(p.id)}>{p.label}</ChoiceBtn>
+        ))}
+      </ChoiceRow>
+    );
+
+    if (phase === 'handle') return (
+      <form onSubmit={submitHandle} style={{ display: 'flex', gap: 8 }}>
+        <TerminalInput ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="yourhandle" prefix="@" />
+        <SendBtn disabled={!input.trim()} />
+      </form>
+    );
+
+    if (phase === 'following') return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {data.followed_accounts.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {data.followed_accounts.map((a, i) => (
+              <span key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.25)',
+                borderRadius: 8, padding: '4px 10px',
+                fontSize: 13, color: '#818cf8',
+                fontFamily: '"PPSupplyMono", monospace',
+              }}>
+                @{a}
+                <button onClick={() => removeFollowed(i)} style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'rgba(255,255,255,0.3)', display: 'flex', padding: 0, lineHeight: 1,
+                }}>
+                  <XIcon size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {data.followed_accounts.length < 5 && (
+          <form onSubmit={addFollowed} style={{ display: 'flex', gap: 8 }}>
+            <TerminalInput
+              value={followInput}
+              onChange={e => setFollowInput(e.target.value)}
+              placeholder="handle"
+              prefix="@"
+              autoFocus
+            />
+            <IconBtn type="submit" disabled={!followInput.trim()}>
+              <Plus size={15} />
+            </IconBtn>
+          </form>
+        )}
+        {data.followed_accounts.length >= 1 && (
+          <button onClick={continueFromFollowing} style={continueBtnStyle}>
+            Continue →
+          </button>
+        )}
+      </div>
+    );
+
+    if (phase === 'bio') return (
+      <form onSubmit={submitBio} style={{ display: 'flex', gap: 8 }}>
+        <TerminalInput ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="Paste your bio here..." />
+        <SendBtn disabled={!input.trim()} />
+      </form>
+    );
+
+    if (phase === 'post') return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <form onSubmit={e => { e.preventDefault(); submitPost(false); }} style={{ display: 'flex', gap: 8 }}>
+          <TerminalInput ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="https://..." />
+          <SendBtn disabled={!input.trim()} />
+        </form>
+        <button onClick={() => submitPost(true)} style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: 'rgba(255,255,255,0.25)', fontSize: 12,
+          fontFamily: '"PPSupplyMono", monospace', textAlign: 'left', padding: 0,
+        }}>
+          skip →
+        </button>
+      </div>
+    );
+
+    if (phase === 'analyzing') return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.25)', fontSize: 13, fontFamily: '"PPSupplyMono", monospace' }}>
+        <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+        analyzing...
+      </div>
+    );
+
+    if (phase === 'summary') return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {analysis && (
+          <div style={{
+            background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.18)',
+            borderRadius: 12, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8,
+          }}>
+            {[
+              { label: 'Audience', val: analysis.target_audience },
+              { label: 'Tone',     val: analysis.tone },
+              { label: 'Space',    val: analysis.space },
+            ].filter(r => r.val).map(({ label, val }) => (
+              <div key={label} style={{ display: 'flex', gap: 12, fontSize: 13 }}>
+                <span style={{ color: 'rgba(255,255,255,0.3)', fontFamily: '"PPSupplyMono", monospace', width: 56, flexShrink: 0 }}>{label}</span>
+                <span style={{ color: 'rgba(255,255,255,0.75)' }}>{val}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={confirm} disabled={saving} style={{
+            flex: 1, padding: '11px 0', borderRadius: 10, border: 'none',
+            background: saving ? 'rgba(99,102,241,0.3)' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
+            color: '#fff', fontWeight: 600, fontSize: 14, cursor: saving ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            transition: 'opacity 0.2s',
+          }}>
+            {saving && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />}
+            Looks right — let's go
+          </button>
+          <button onClick={() => { setPhase('bio'); setInput(''); pushLine('ai', "Ok, paste your bio again."); }} style={{
+            padding: '11px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)',
+            background: 'transparent', color: 'rgba(255,255,255,0.4)', fontSize: 14, cursor: 'pointer',
+          }}>
+            Adjust
+          </button>
+        </div>
+      </div>
+    );
+
+    if (phase === 'done') return (
+      <button onClick={onComplete} style={{
+        padding: '12px 36px', borderRadius: 50, border: 'none',
+        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+        color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer',
+        boxShadow: '0 0 40px rgba(99,102,241,0.4)',
+      }}>
+        Enter Station →
+      </button>
+    );
+
+    return null;
+  };
 
   return (
     <div style={{
@@ -169,8 +345,7 @@ export default function Onboarding({ onComplete }) {
         radial-gradient(circle at 20% 20%, rgba(99,102,241,0.08) 0%, transparent 55%),
         radial-gradient(circle at 80% 80%, rgba(139,92,246,0.06) 0%, transparent 55%)
       `,
-      display: 'flex',
-      flexDirection: 'column',
+      display: 'flex', flexDirection: 'column',
       color: '#fff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     }}>
@@ -179,219 +354,158 @@ export default function Onboarding({ onComplete }) {
       <div style={{
         padding: '20px 24px 12px',
         borderBottom: '1px solid rgba(255,255,255,0.05)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
       }}>
         <div style={{
           width: 8, height: 8, borderRadius: '50%',
-          background: '#818cf8',
-          boxShadow: '0 0 8px #818cf8',
+          background: '#818cf8', boxShadow: '0 0 8px #818cf8',
           animation: 'pulse 2s ease-in-out infinite',
         }} />
         <span style={{
-          fontSize: 11,
-          fontFamily: '"PPSupplyMono", monospace',
-          color: 'rgba(255,255,255,0.4)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.1em',
+          fontSize: 11, fontFamily: '"PPSupplyMono", monospace',
+          color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em',
         }}>
-          Spirit Onboarding
+          Spirit · Setup
         </span>
-        <span style={{
-          marginLeft: 'auto',
-          fontSize: 11,
-          fontFamily: '"PPSupplyMono", monospace',
-          color: 'rgba(255,255,255,0.2)',
-        }}>
-          {Math.min(step, STEPS.length)}/{STEPS.length}
-        </span>
-      </div>
-
-      {/* Progress bar */}
-      <div style={{ height: 2, background: 'rgba(255,255,255,0.04)', flexShrink: 0 }}>
-        <div style={{
-          height: '100%',
-          width: `${(Math.min(step, STEPS.length) / STEPS.length) * 100}%`,
-          background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
-          transition: 'width 0.4s ease',
-        }} />
       </div>
 
       {/* Chat area */}
       <div style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: '24px 24px 12px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        scrollbarWidth: 'thin',
-        scrollbarColor: 'rgba(255,255,255,0.06) transparent',
+        flex: 1, overflowY: 'auto', padding: '24px 24px 12px',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.06) transparent',
       }}>
-      <div style={{ width: '100%', maxWidth: 560, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {lines.map(line => (
-          <ChatLine key={line.id} line={line} />
-        ))}
-
-        {/* Done state — launch button */}
-        {done && (
-          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
-            <button
-              onClick={onComplete}
-              style={{
-                padding: '13px 36px',
-                borderRadius: 50,
-                border: 'none',
-                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                color: '#fff',
-                fontWeight: 700,
-                fontSize: 15,
-                cursor: 'pointer',
-                boxShadow: '0 0 40px rgba(99,102,241,0.4)',
-                transition: 'transform 0.2s, box-shadow 0.2s',
-              }}
-              onMouseOver={e => { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.boxShadow = '0 0 60px rgba(99,102,241,0.6)'; }}
-              onMouseOut={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 0 40px rgba(99,102,241,0.4)'; }}
-            >
-              Enter Station →
-            </button>
-          </div>
-        )}
-
-        <div ref={bottomRef} />
-      </div>
-      </div>
-
-      {/* Input */}
-      {!done && (
-        <div style={{ margin: '0 auto 24px', width: '100%', maxWidth: 560, padding: '0 16px', boxSizing: 'border-box', flexShrink: 0 }}>
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 12,
-            padding: '4px 4px 4px 14px',
-          }}
-        >
-          <span style={{
-            fontSize: 14,
-            fontFamily: '"PPSupplyMono", monospace',
-            color: '#818cf8',
-            flexShrink: 0,
-            userSelect: 'none',
-          }}>
-            &gt;_
-          </span>
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            placeholder={placeholder}
-            disabled={saving}
-            style={{
-              flex: 1,
-              background: 'transparent',
-              border: 'none',
-              outline: 'none',
-              color: '#fff',
-              fontSize: 14,
-              fontFamily: '"PPSupplyMono", "Courier New", monospace',
-              caretColor: '#818cf8',
-            }}
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || saving}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 36,
-              height: 36,
-              borderRadius: 9,
-              border: 'none',
-              background: input.trim() && !saving
-                ? 'linear-gradient(135deg, #6366f1, #4f46e5)'
-                : 'rgba(255,255,255,0.05)',
-              color: input.trim() && !saving ? '#fff' : 'rgba(255,255,255,0.2)',
-              cursor: input.trim() && !saving ? 'pointer' : 'not-allowed',
-              transition: 'all 0.2s',
-              flexShrink: 0,
-              boxShadow: input.trim() && !saving ? '0 0 16px rgba(99,102,241,0.4)' : 'none',
-            }}
-          >
-            {saving ? <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={15} />}
-          </button>
-        </form>
+        <div style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {lines.map(line => <ChatLine key={line.id} line={line} />)}
+          <div ref={bottomRef} />
         </div>
-      )}
+      </div>
+
+      {/* Input area */}
+      <div style={{
+        margin: '0 auto 28px', width: '100%', maxWidth: 520,
+        padding: '0 16px', boxSizing: 'border-box', flexShrink: 0,
+      }}>
+        {renderInput()}
+      </div>
 
       <style>{`
-        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
-        @keyframes spin  { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes fadeIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
+        @keyframes pulse  { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+        @keyframes spin   { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+        @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
       `}</style>
     </div>
   );
 }
 
-// ── Chat line ─────────────────────────────────────────────────────────────────
+// ── Sub-components ─────────────────────────────────────────────────────────────
+
 function ChatLine({ line }) {
   const isUser = line.type === 'user';
-
-  const colors = {
-    ai:      { text: 'rgba(255,255,255,0.85)', prefix: '←', bg: 'rgba(99,102,241,0.07)', border: 'rgba(129,140,248,0.2)' },
-    user:    { text: '#fff',                    prefix: '$', bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)' },
-    success: { text: '#10b981',                 prefix: '✓', bg: 'rgba(16,185,129,0.06)', border: 'rgba(16,185,129,0.15)' },
-    error:   { text: '#ef4444',                 prefix: '✗', bg: 'rgba(239,68,68,0.06)',  border: 'rgba(239,68,68,0.15)' },
-    warn:    { text: '#f59e0b',                 prefix: '⚠', bg: 'rgba(245,158,11,0.06)', border: 'rgba(245,158,11,0.15)' },
+  const styles = {
+    ai:      { text: 'rgba(255,255,255,0.85)', prefix: '←', bg: 'rgba(99,102,241,0.07)',  border: 'rgba(129,140,248,0.2)' },
+    user:    { text: '#fff',                   prefix: '$', bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.08)' },
+    success: { text: '#10b981',                prefix: '✓', bg: 'rgba(16,185,129,0.06)',  border: 'rgba(16,185,129,0.15)' },
+    error:   { text: '#ef4444',                prefix: '✗', bg: 'rgba(239,68,68,0.06)',   border: 'rgba(239,68,68,0.15)' },
+    warn:    { text: '#f59e0b',                prefix: '⚠', bg: 'rgba(245,158,11,0.06)',  border: 'rgba(245,158,11,0.15)' },
   };
-
-  const style = colors[line.type] || colors.ai;
-
+  const s = styles[line.type] || styles.ai;
   return (
-    <div style={{
-      display: 'flex',
-      justifyContent: isUser ? 'flex-end' : 'flex-start',
-      animation: 'fadeIn 0.25s ease-out',
-    }}>
+    <div style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', animation: 'fadeIn 0.25s ease-out' }}>
       <div style={{
-        maxWidth: '85%',
-        background: style.bg,
-        border: `1px solid ${style.border}`,
+        maxWidth: '85%', background: s.bg, border: `1px solid ${s.border}`,
         borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-        padding: '10px 14px',
-        display: 'flex',
-        gap: 8,
-        alignItems: 'flex-start',
+        padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'flex-start',
       }}>
-        <span style={{
-          fontSize: 12,
-          color: style.text,
-          opacity: 0.5,
-          flexShrink: 0,
-          fontFamily: '"PPSupplyMono", monospace',
-          marginTop: 1,
-        }}>
-          {style.prefix}
+        <span style={{ fontSize: 12, color: s.text, opacity: 0.5, flexShrink: 0, fontFamily: '"PPSupplyMono", monospace', marginTop: 1 }}>
+          {s.prefix}
         </span>
-        <span style={{
-          fontSize: 14,
-          color: style.text,
-          lineHeight: 1.6,
-          fontFamily: isUser ? '"PPSupplyMono", monospace' : 'system-ui, sans-serif',
-          whiteSpace: 'pre-line',
-        }}>
+        <span style={{ fontSize: 14, color: s.text, lineHeight: 1.6, fontFamily: isUser ? '"PPSupplyMono", monospace' : 'system-ui, sans-serif', whiteSpace: 'pre-line' }}>
           {line.text}
         </span>
       </div>
     </div>
   );
 }
+
+function ChoiceRow({ children }) {
+  return <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{children}</div>;
+}
+
+function ChoiceBtn({ onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '10px 20px', borderRadius: 10,
+      border: '1px solid rgba(99,102,241,0.3)',
+      background: 'rgba(99,102,241,0.1)',
+      color: '#a5b4fc', fontSize: 14, fontWeight: 500,
+      cursor: 'pointer', transition: 'all 0.15s',
+    }}
+    onMouseOver={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.22)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)'; }}
+    onMouseOut={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.1)'; e.currentTarget.style.borderColor = 'rgba(99,102,241,0.3)'; }}
+    >
+      {children}
+    </button>
+  );
+}
+
+const TerminalInput = React.forwardRef(function TerminalInput({ value, onChange, placeholder, prefix, autoFocus }, ref) {
+  return (
+    <div style={{
+      flex: 1, display: 'flex', alignItems: 'center', gap: 8,
+      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 10, padding: '4px 4px 4px 12px',
+    }}>
+      {prefix && <span style={{ fontSize: 13, color: '#818cf8', fontFamily: '"PPSupplyMono", monospace', flexShrink: 0 }}>{prefix}</span>}
+      <input
+        ref={ref}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        style={{
+          flex: 1, background: 'transparent', border: 'none', outline: 'none',
+          color: '#fff', fontSize: 14, fontFamily: '"PPSupplyMono", "Courier New", monospace',
+          caretColor: '#818cf8', padding: '8px 0',
+        }}
+      />
+    </div>
+  );
+});
+
+function SendBtn({ disabled }) {
+  return (
+    <button type="submit" disabled={disabled} style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      width: 38, height: 38, borderRadius: 10, border: 'none', flexShrink: 0,
+      background: disabled ? 'rgba(255,255,255,0.05)' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
+      color: disabled ? 'rgba(255,255,255,0.2)' : '#fff',
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      boxShadow: disabled ? 'none' : '0 0 14px rgba(99,102,241,0.4)',
+      transition: 'all 0.2s', alignSelf: 'center',
+    }}>
+      <Send size={14} />
+    </button>
+  );
+}
+
+function IconBtn({ type, disabled, onClick, children }) {
+  return (
+    <button type={type} disabled={disabled} onClick={onClick} style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      width: 38, height: 38, borderRadius: 10, border: 'none', flexShrink: 0,
+      background: disabled ? 'rgba(255,255,255,0.05)' : 'rgba(99,102,241,0.2)',
+      color: disabled ? 'rgba(255,255,255,0.2)' : '#818cf8',
+      cursor: disabled ? 'not-allowed' : 'pointer', transition: 'all 0.2s', alignSelf: 'center',
+    }}>
+      {children}
+    </button>
+  );
+}
+
+const continueBtnStyle = {
+  padding: '9px 20px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)',
+  background: 'transparent', color: 'rgba(255,255,255,0.5)', fontSize: 13,
+  fontFamily: '"PPSupplyMono", monospace', cursor: 'pointer', textAlign: 'left',
+  transition: 'color 0.2s',
+};

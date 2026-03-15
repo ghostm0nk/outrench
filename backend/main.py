@@ -123,6 +123,22 @@ class OnboardingRequest(BaseModel):
     tone: str = "casual"
     account_types: str = "both"   # personal | product | both
     mode: str = "growth"           # growth | content | both
+    # New profile fields
+    platform: str = ""            # twitter | instagram | linkedin
+    handle: str = ""
+    followed_accounts: str = ""   # JSON array stored as text
+    bio: str = ""
+    post_link: str = ""
+
+
+class ProfileAnalysisRequest(BaseModel):
+    clerk_id: str
+    platform: str
+    handle: str
+    account_type: str
+    followed_accounts: list = []
+    bio: str = ""
+    post_link: str = ""
 
 
 class ChannelCredentialsRequest(BaseModel):
@@ -387,6 +403,11 @@ async def save_onboarding(req: OnboardingRequest):
             "tone": req.tone,
             "account_types": req.account_types,
             "mode": req.mode,
+            "platform": req.platform,
+            "handle": req.handle,
+            "followed_accounts": req.followed_accounts,
+            "bio": req.bio,
+            "post_link": req.post_link,
         }
         supabase.table("startups").upsert(startup_data, on_conflict="clerk_id").execute()
 
@@ -414,6 +435,71 @@ async def check_onboarding(clerk_id: str):
         return {"onboarded": False}
     except Exception as e:
         print(f"Check onboarding error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Profile Analysis (new onboarding) ──────────────────────────────────────────
+@app.post("/api/onboarding/analyze")
+async def analyze_profile(req: ProfileAnalysisRequest):
+    """
+    Spirit analyzes the user's profile data and infers their context.
+    Uses Groq to infer target audience, tone, and problem space from bio + followed accounts.
+    Returns a structured summary for the user to confirm before saving.
+    """
+    if not GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY missing")
+
+    platform_label = {"twitter": "Twitter/X", "instagram": "Instagram", "linkedin": "LinkedIn"}.get(req.platform, req.platform)
+    followed_str = ", ".join(f"@{a.lstrip('@')}" for a in req.followed_accounts if a) or "not provided"
+
+    prompt = f"""Analyze this founder's social media presence.
+
+Platform: {platform_label}
+Handle: @{req.handle.lstrip('@')}
+Account type: {req.account_type}
+Bio: {req.bio or 'not provided'}
+Post link: {req.post_link or 'not provided'}
+Accounts they follow/admire: {followed_str}
+
+Based on this, infer:
+1. Who is their target audience on {platform_label}?
+2. What tone do they use? (infer from the bio's writing style — how formal/casual, how direct)
+3. What industry or space are they in?
+4. What problem are they likely building a solution for?
+5. Write a 2-sentence plain-English summary of what you understood about this person and their goals.
+
+Return ONLY a JSON object:
+{{
+  "target_audience": "...",
+  "tone": "...",
+  "space": "...",
+  "problem_solved": "...",
+  "summary": "two sentences about who this person is and what Spirit will focus on"
+}}"""
+
+    try:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": GROQ_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You are an expert at reading founder profiles. Return only valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 350
+            },
+            timeout=20.0
+        )
+        response.raise_for_status()
+        text  = response.json()["choices"][0]["message"]["content"].strip()
+        start = text.find("{")
+        end   = text.rfind("}") + 1
+        analysis = json.loads(text[start:end])
+        return {"status": "ok", "analysis": analysis}
+    except Exception as e:
+        print(f"Profile analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

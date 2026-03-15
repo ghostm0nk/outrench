@@ -9,10 +9,9 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # In-memory credentials store: {clerk_id: {"username": ..., "password": ...}}
-# Ephemeral — cleared on server restart. User must run "setup login" again after redeploy.
 _stored_credentials: dict = {}
 
-# Per-sweep limits by timeframe — controls how aggressive each session is.
+# Per-sweep limits by timeframe.
 # Scheduling (how often sessions repeat) is handled by the frontend timer.
 TIMEFRAME_CONFIG = {
     "1hr":  {"posts": 8,  "max_likes": 3, "max_follows": 2, "max_comments": 1},
@@ -29,12 +28,11 @@ async def get_ai_response(prompt: str, system_prompt: str = "You are a helpful A
     try:
         loop = asyncio.get_event_loop()
         def make_request():
-            model = os.getenv("GROQ_MODEL", GROQ_MODEL)
             return requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
                 json={
-                    "model": model,
+                    "model": os.getenv("GROQ_MODEL", GROQ_MODEL),
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
@@ -51,56 +49,125 @@ async def get_ai_response(prompt: str, system_prompt: str = "You are a helpful A
         return f"Error connecting to Groq: {str(e)}"
 
 
+def _generate_search_queries(startup_context: dict, user_goal: str = "") -> list:
+    """
+    Generate targeted X/Twitter search queries from startup context.
+    Returns 3-4 specific queries Spirit will search across in one session.
+    Falls back to user_goal if AI call fails or no context.
+    """
+    if not GROQ_API_KEY or not startup_context:
+        return [user_goal] if user_goal else ["founder personal brand growth", "building in public"]
+
+    name     = startup_context.get("name", "")
+    problem  = startup_context.get("problem_solved", "")
+    audience = startup_context.get("target_audience", "founders")
+    mode     = startup_context.get("mode", "growth")
+
+    system = """You generate targeted X/Twitter search queries for founder growth.
+
+Return ONLY a JSON array of 4 short search query strings.
+Each query should find people actively experiencing the problem OR discussing the space.
+Focus on: complaint language, advice-seeking, building-in-public posts, pain points.
+Write queries the way real people tweet — no hashtags, 2-5 words each."""
+
+    prompt = f"""Startup: {name}
+Problem it solves: {problem}
+Target audience: {audience}
+Mode: {mode}
+User's session goal hint: {user_goal}
+
+Generate 4 X/Twitter search queries to find this audience right now."""
+
+    try:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": os.getenv("GROQ_MODEL", GROQ_MODEL),
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.4,
+                "max_tokens": 150
+            },
+            timeout=15.0
+        )
+        response.raise_for_status()
+        text = response.json()["choices"][0]["message"]["content"].strip()
+        start = text.find("[")
+        end   = text.rfind("]") + 1
+        queries = json.loads(text[start:end])
+        return [q for q in queries if q][:4]
+    except Exception:
+        return [user_goal] if user_goal else ["founder growth twitter", "building in public"]
+
+
 def _evaluate_post(post_text: str, goal: str, startup_context: dict = None) -> dict:
     """
-    Synchronous LLM call to evaluate a post and decide how to interact.
-    Returns: {"action": "like" | "follow" | "skip", "reason": str}
+    Evaluate a post and decide how to interact.
+    Priority (highest ROI first): comment > like_and_follow > follow > like > skip
+    Returns: {"action": "like" | "follow" | "like_and_follow" | "comment" | "skip", "reason": str}
     """
     if not GROQ_API_KEY:
         return {"action": "skip", "reason": "No API key"}
 
     if startup_context:
-        system = f"""You are Spirit, the AI growth agent for {startup_context.get('name', 'a startup')}.
+        name     = startup_context.get("name", "a startup")
+        one_liner = startup_context.get("one_liner", "")
+        audience = startup_context.get("target_audience", "founders")
+        problem  = startup_context.get("problem_solved", "")
+        tone     = startup_context.get("tone", "direct and genuine")
+        mode     = startup_context.get("mode", "growth")
 
-About the startup:
-- What they do: {startup_context.get('one_liner', 'N/A')}
-- Target audience: {startup_context.get('target_audience', 'N/A')}
-- Problem they solve: {startup_context.get('problem_solved', 'N/A')}
-- Unique value: {startup_context.get('unique_value', 'N/A')}
-- Tone: {startup_context.get('tone', 'casual')}
+        system = f"""You are Spirit, the AI growth agent working for {name} — {one_liner}.
+The account owner is a founder trying to grow their personal brand on X/Twitter.
+Current mode: {mode}.
 
-Your job is to evaluate X/Twitter posts and decide how to engage on behalf of this startup.
+Target audience: {audience}
+Problem {name} solves: {problem}
 
-For each post, return a JSON object with:
-- "action": one of "like", "follow", "like_and_follow", "comment", or "skip"
-- "reason": one short sentence explaining your decision
+ACTION PRIORITY (use the highest-value action that fits):
+1. "comment" — A thoughtful reply. Use when: the post has traction (likes/replies visible), the author is a real founder sharing a struggle/milestone/insight, and a reply from {name}'s founder perspective would genuinely add value. This is the most visible and highest-ROI action.
+2. "like_and_follow" — For accounts consistently posting highly relevant content worth tracking long-term.
+3. "follow" — For relevant accounts posting in the right space, even if this specific post isn't comment-worthy.
+4. "like" — Quick acknowledgment for relevant posts not worth a comment or follow.
+5. "skip" — Use for everything else.
 
-Guidelines:
-- "like" posts from people who match the target audience or are experiencing the problem this startup solves
-- "follow" accounts posting consistently relevant content worth tracking
-- "like_and_follow" for highly relevant potential customers or partners
-- "comment" ONLY for high-traction posts (replies, retweets, or likes suggest visibility) where a thoughtful reply from this startup's perspective would genuinely add value — not just agree or promote
-- "skip" for spam, irrelevant content, ads, or people clearly outside the target audience
+ENGAGE with posts that show:
+- A founder venting about growth, visibility, or audience-building struggles
+- Someone asking for advice on building in public, personal branding, or the problem {name} solves
+- A milestone post (launched something, hit a number, learned something hard)
+- A genuine building-in-public update with real substance
+- High-traction conversation where {name}'s perspective adds something real
 
-Return ONLY the JSON object. No markdown, no explanation outside it."""
+SKIP immediately if:
+- It looks like an ad, sponsored post, or brand account promotion
+- It's a retweet or quote tweet with no original thinking
+- It's a bot, spam, or engagement-bait ("follow for follow", "like this if...")
+- The poster is a large company, media outlet, or influencer brand — not a real founder
+- It's unrelated to founders, startups, growth, or the problem {name} solves
+
+Return ONLY a JSON object. No markdown, no explanation outside it:
+{{"action": "...", "reason": "one short sentence"}}"""
+
     else:
-        system = """You are Spirit, an autonomous growth agent browsing X/Twitter.
-Your job is to evaluate posts and decide how to interact, exactly like a senior market analyst building a personal brand.
+        system = """You are Spirit, a growth agent for a founder building their personal brand on X/Twitter.
 
-For each post, return a JSON object with:
-- "action": one of "like", "follow", "like_and_follow", "comment", or "skip"
-- "reason": one short sentence explaining your decision
+ACTION PRIORITY:
+1. "comment" — For high-traction posts where a genuine insight from a founder's perspective adds real value
+2. "like_and_follow" — For highly relevant accounts worth tracking long-term
+3. "follow" — For relevant accounts posting in the founder/startup space
+4. "like" — For relevant posts not worth a comment or follow
+5. "skip" — For ads, bots, spam, brands, irrelevant content
 
-Guidelines:
-- "like" posts that are relevant, insightful, or align with the goal
-- "follow" accounts posting consistently good content worth tracking
-- "like_and_follow" for highly relevant accounts
-- "comment" ONLY for high-traction posts where a thoughtful reply would be visible and add real value
-- "skip" for spam, irrelevant content, or ads
+Focus on: founders building in public, startup growth discussions, personal brand building.
+Skip: brand accounts, ads, retweets without commentary, bots, engagement bait.
 
-Return ONLY the JSON object. No markdown, no explanation outside it."""
+Return ONLY a JSON object:
+{"action": "...", "reason": "one short sentence"}"""
 
-    prompt = f"Goal: {goal}\n\nPost text:\n{post_text[:400]}"
+    prompt = f"Search context: {goal}\n\nPost:\n{post_text[:500]}"
 
     try:
         response = requests.post(
@@ -118,33 +185,44 @@ Return ONLY the JSON object. No markdown, no explanation outside it."""
             timeout=15.0
         )
         response.raise_for_status()
-        text = response.json()["choices"][0]["message"]["content"].strip()
+        text  = response.json()["choices"][0]["message"]["content"].strip()
         start = text.find("{")
-        end = text.rfind("}") + 1
+        end   = text.rfind("}") + 1
         return json.loads(text[start:end])
     except Exception as ex:
         return {"action": "skip", "reason": f"Eval error: {str(ex)[:40]}"}
 
 
 def _generate_comment(post_text: str, startup_context: dict) -> str:
-    """Generate a contextual reply in the startup's voice. Returns comment text or empty string on failure."""
+    """
+    Generate a contextual reply in the founder's voice.
+    Sounds like a real person, never pitches, always adds value.
+    Returns comment text or empty string if Spirit can't add value.
+    """
     if not GROQ_API_KEY:
         return ""
-    name     = startup_context.get('name', 'us')
-    one_liner = startup_context.get('one_liner', '')
-    tone     = startup_context.get('tone', 'direct and genuine')
-    problem  = startup_context.get('problem_solved', '')
 
-    system = f"""You write short, human X/Twitter replies on behalf of {name} ({one_liner}).
-Tone: {tone}.
-Core problem we solve: {problem}.
+    name      = startup_context.get("name", "us")
+    one_liner = startup_context.get("one_liner", "")
+    tone      = startup_context.get("tone", "direct and genuine")
+    problem   = startup_context.get("problem_solved", "")
+    audience  = startup_context.get("target_audience", "founders")
+
+    system = f"""You write X/Twitter replies for the founder of {name} ({one_liner}).
+
+You speak in first person as the founder. Tone: {tone}.
+You deeply understand this problem: {problem} — because you're building a solution for it.
+Your audience: {audience}.
 
 Rules:
-- 1-2 sentences max. No hashtags. No emojis unless the tone calls for it.
-- Sound like a real person, not a brand account.
-- Add genuine value — insight, a question, or a relatable observation.
-- Never mention the product name or pitch anything.
-- If you can't add value, return exactly: SKIP"""
+- 1-2 sentences max. No hashtags. No emojis unless the tone strongly calls for it.
+- Sound like a real founder who genuinely relates to this post — not a brand, not a bot.
+- Add real value: a hard-earned insight, a question that opens a conversation, or a relatable observation.
+- NEVER pitch the product or mention {name} by name. This is relationship building, not marketing.
+- For struggle posts: lead with empathy, then share a genuine insight or ask a real question.
+- For milestone posts: lead with honest acknowledgment, then add a perspective or ask something interesting.
+- For advice posts: engage with the substance, share a real take.
+- If you genuinely cannot add value to this specific post, return exactly: SKIP"""
 
     try:
         response = requests.post(
@@ -154,15 +232,18 @@ Rules:
                 "model": os.getenv("GROQ_MODEL", GROQ_MODEL),
                 "messages": [
                     {"role": "system", "content": system},
-                    {"role": "user", "content": f"Write a reply to this post:\n\n{post_text[:400]}"}
+                    {"role": "user", "content": f"Write a reply to this post:\n\n{post_text[:500]}"}
                 ],
-                "temperature": 0.7,
-                "max_tokens": 80
+                "temperature": 0.75,
+                "max_tokens": 100
             },
             timeout=15.0
         )
         response.raise_for_status()
         text = response.json()["choices"][0]["message"]["content"].strip()
+        # Strip wrapping quotes if model added them
+        if text.startswith('"') and text.endswith('"'):
+            text = text[1:-1].strip()
         return "" if text == "SKIP" else text
     except Exception:
         return ""
@@ -171,9 +252,6 @@ Rules:
 async def setup_login_interactive(websocket, clerk_id: str = None, supabase=None) -> dict:
     """
     Asks the user for X/Twitter credentials interactively through the browser terminal.
-    Sends 'prompt' messages and awaits 'prompt_response' replies over the WebSocket.
-    Stores credentials in memory AND persists to Supabase so they survive server restarts.
-    Returns {"username": ..., "password": ...} or {} if the user cancels.
     """
     async def ask(field: str, label: str, masked: bool) -> str:
         await websocket.send_json({"type": "prompt", "field": field, "text": label, "masked": masked})
@@ -196,12 +274,9 @@ async def setup_login_interactive(websocket, clerk_id: str = None, supabase=None
         return {}
 
     creds = {"username": username, "password": password}
-
-    # Store in memory for this session
     store_key = clerk_id or "default"
     _stored_credentials[store_key] = creds
 
-    # Persist to Supabase so credentials survive server restarts
     if supabase and clerk_id:
         try:
             supabase.table("channel_credentials").upsert({
@@ -218,7 +293,6 @@ async def setup_login_interactive(websocket, clerk_id: str = None, supabase=None
 
     await websocket.send_json({"type": "success", "text": f"Credentials saved for @{username}. Now give Spirit a scouting task to begin."})
     return creds
-
 
 
 async def setup_cookies_interactive(websocket, clerk_id: str = None, supabase=None) -> dict:
@@ -271,7 +345,6 @@ async def setup_cookies_interactive(websocket, clerk_id: str = None, supabase=No
 
 # ─────────────────────────────────────────────────────────────────────────────
 # twikit session — lightweight HTTP-based X client, no browser required.
-# Runs in a dedicated OS thread via asyncio.run().
 # ─────────────────────────────────────────────────────────────────────────────
 async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: dict, startup_context: dict = None, limits: dict = None):
     from twikit import Client
@@ -283,12 +356,11 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
 
     client = Client('en-US')
 
-    # Cookie auth (preferred — bypasses Cloudflare entirely)
+    # Cookie auth (preferred — bypasses Cloudflare)
     if credentials.get("auth_token") and credentials.get("ct0"):
         log_queue.append(("info", "Connecting to X with session cookies..."))
         client.set_cookies({"auth_token": credentials["auth_token"], "ct0": credentials["ct0"]})
-        log_queue.append(("success", "Connected. Searching for relevant posts..."))
-    # Username/password fallback
+        log_queue.append(("success", "Connected."))
     elif credentials.get("username") and credentials.get("password"):
         log_queue.append(("info", "Connecting to X..."))
         try:
@@ -296,7 +368,7 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
                 auth_info_1=credentials["username"],
                 password=credentials["password"]
             )
-            log_queue.append(("success", "Connected. Searching for relevant posts..."))
+            log_queue.append(("success", "Connected."))
         except Exception as ex:
             log_queue.append(("error", f"Login failed: {str(ex)[:120]}"))
             log_queue.append(("__results__", []))
@@ -306,58 +378,80 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
         log_queue.append(("__results__", []))
         return
 
-    try:
-        tweets = await client.search_tweet(goal, product='Latest', count=num_posts * 2)
-        tweet_list = list(tweets)[:num_posts]
-    except Exception as ex:
-        log_queue.append(("warn", f"Search failed, trying home timeline..."))
+    # Generate targeted search queries from startup context
+    log_queue.append(("info", "Spirit is identifying the best search targets..."))
+    queries = _generate_search_queries(startup_context, goal)
+    log_queue.append(("cmd", f"Search queries: {' | '.join(queries)}"))
+
+    # Fetch posts across all queries, deduplicate by tweet ID
+    seen_ids = set()
+    tweet_list = []
+    per_query = max(4, (num_posts * 2) // len(queries))
+
+    for query in queries:
+        if len(tweet_list) >= num_posts * 2:
+            break
         try:
-            tweets = await client.get_latest_timeline(count=num_posts * 2)
-            tweet_list = list(tweets)[:num_posts]
+            results = await client.search_tweet(query, product='Latest', count=per_query)
+            for tweet in list(results):
+                tweet_id = getattr(tweet, 'id', None)
+                if tweet_id and tweet_id not in seen_ids:
+                    seen_ids.add(tweet_id)
+                    tweet_list.append(tweet)
+        except Exception as ex:
+            log_queue.append(("warn", f"Search '{query}' failed: {str(ex)[:60]}"))
+
+    # Fallback to home timeline if all searches failed
+    if not tweet_list:
+        log_queue.append(("warn", "All searches failed — falling back to home timeline..."))
+        try:
+            results = await client.get_latest_timeline(count=num_posts * 2)
+            tweet_list = list(results)
         except Exception as ex2:
             log_queue.append(("error", f"Could not fetch posts: {str(ex2)[:80]}"))
             log_queue.append(("__results__", []))
             return
 
-    log_queue.append(("info", f"Found {len(tweet_list)} posts. Analyzing with AI..."))
+    tweet_list = tweet_list[:num_posts]
+    log_queue.append(("info", f"Found {len(tweet_list)} posts across {len(queries)} searches. Analyzing..."))
 
-    loop = asyncio.get_event_loop()
-    results = []
-    lim = limits or DEFAULT_CONFIG
+    loop     = asyncio.get_event_loop()
+    results  = []
+    lim      = limits or DEFAULT_CONFIG
     like_count = follow_count = comment_count = 0
 
     for idx, tweet in enumerate(tweet_list):
         try:
             post_text = getattr(tweet, 'text', None) or getattr(tweet, 'full_text', None) or "(no text)"
-            user = getattr(tweet, 'user', None)
-            handle = f"@{user.screen_name}" if user else f"@user_{idx}"
+            user      = getattr(tweet, 'user', None)
+            handle    = f"@{user.screen_name}" if user else f"@user_{idx}"
 
             preview = post_text[:70].replace('\n', ' ')
-            log_queue.append(("info", f"Evaluating [{idx+1}/{len(tweet_list)}] {handle}: \"{preview}...\""))
+            log_queue.append(("info", f"[{idx+1}/{len(tweet_list)}] {handle}: \"{preview}...\""))
 
             decision = await loop.run_in_executor(None, _evaluate_post, post_text, goal, startup_context)
-            action = decision.get("action", "skip")
-            reason = decision.get("reason", "")
+            action   = decision.get("action", "skip")
+            reason   = decision.get("reason", "")
 
             if action == "skip":
                 log_queue.append(("warn", f"  → Skip — {reason}"))
                 await asyncio.sleep(0.5)
                 continue
 
-            # Enforce per-sweep caps — downgrade action if limit reached
+            # Enforce per-sweep caps — downgrade if limit reached
             wants_like    = "like" in action
             wants_follow  = "follow" in action
             wants_comment = action == "comment"
 
-            if wants_like   and like_count    >= lim["max_likes"]:    wants_like = False
-            if wants_follow and follow_count  >= lim["max_follows"]:  wants_follow = False
+            if wants_like    and like_count    >= lim["max_likes"]:    wants_like    = False
+            if wants_follow  and follow_count  >= lim["max_follows"]:  wants_follow  = False
             if wants_comment and comment_count >= lim["max_comments"]: wants_comment = False
 
             if not wants_like and not wants_follow and not wants_comment:
                 log_queue.append(("warn", f"  → Cap reached, skipping {handle}"))
                 continue
 
-            # Build final action label
+            # Final action label
             if wants_comment:
                 final_action = "comment"
             elif wants_like and wants_follow:
@@ -369,7 +463,7 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
 
             log_queue.append(("cmd", f"  → {final_action.upper()} — {reason}"))
 
-            # ── Execute interactions ──────────────────────────────────────────
+            # Execute interactions
             comment_text = ""
             try:
                 if wants_like:
@@ -388,16 +482,16 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
                         await tweet.reply(comment_text)
                         comment_count += 1
                         log_queue.append(("info", f"  ↩ Commented: \"{comment_text[:80]}\""))
-                        await asyncio.sleep(2.0)
+                        await asyncio.sleep(2.5)
 
             except Exception as act_err:
                 log_queue.append(("warn", f"  Action failed: {str(act_err)[:60]}"))
 
             results.append({
-                "handle": handle,
+                "handle":  handle,
                 "content": post_text[:300],
-                "action": final_action,
-                "reason": reason,
+                "action":  final_action,
+                "reason":  reason,
                 "comment": comment_text,
             })
 
@@ -410,7 +504,7 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
 
 
 def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: dict = None, startup_context: dict = None, limits: dict = None):
-    """Entry point called from the OS thread — runs twikit async session."""
+    """Entry point called from OS thread — runs twikit async session."""
     asyncio.run(_run_twikit(goal, log_queue, num_posts, credentials, startup_context, limits))
 
 
@@ -418,33 +512,33 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
     """
     Main execution loop. Runs one sweep — the frontend timer schedules repeats based on timeframe.
     """
-    limits = TIMEFRAME_CONFIG.get(timeframe, DEFAULT_CONFIG)
+    limits    = TIMEFRAME_CONFIG.get(timeframe, DEFAULT_CONFIG)
     num_posts = limits["posts"]
 
-    # 1. Fetch startup profile to give Spirit context
+    # 1. Fetch startup profile — Spirit needs this to know who it's working for
     startup_context = None
     if supabase and clerk_id:
         try:
             res = supabase.table("startups").select("*").eq("clerk_id", clerk_id).execute()
             if res.data:
                 startup_context = res.data[0]
-                startup_name = startup_context.get("name", "your startup")
-                await websocket.send_json({"type": "info", "text": f"Spirit loaded profile for {startup_name}."})
+                startup_name    = startup_context.get("name", "your startup")
+                mode            = startup_context.get("mode", "growth")
+                await websocket.send_json({"type": "info", "text": f"Spirit loaded profile: {startup_name} · {mode} mode"})
             else:
                 await websocket.send_json({"type": "warn", "text": "No startup profile found — complete onboarding for smarter scouting."})
         except Exception as e:
             await websocket.send_json({"type": "warn", "text": f"Could not load startup profile: {str(e)[:60]}"})
 
     # 2. Acknowledge
-    await websocket.send_json({"type": "ai_response", "text": f"Spirit activated. Mission: '{user_input}'"})
+    await websocket.send_json({"type": "ai_response", "text": f"Spirit activated. Goal: '{user_input}'"})
     await asyncio.sleep(0.3)
     await websocket.send_json({"type": "info", "text": "Initializing X session..."})
 
     log_queue = []
 
-    # Look up stored credentials — memory first, then Supabase (survives restarts)
-    # Priority: cookie_session > playwright_session (username/password)
-    store_key = clerk_id or "default"
+    # Load credentials — memory first, then Supabase (survives restarts)
+    store_key   = clerk_id or "default"
     credentials = _stored_credentials.get(store_key)
     if not credentials and supabase and clerk_id:
         for account_type in ["cookie_session", "playwright_session"]:
@@ -464,7 +558,7 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
     )
     thread.start()
 
-    # 2. Stream logs in real-time while browser runs
+    # Stream logs in real-time
     results = []
     while thread.is_alive() or log_queue:
         if log_queue:
@@ -478,33 +572,35 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
 
     thread.join(timeout=5)
 
-    # 3. Save results to DB and stream each lead to frontend
-    saved = 0
+    # Save results to DB and stream each lead card to frontend
     for r in results:
-        # Stream structured lead card to frontend
         await websocket.send_json({
-            "type": "lead",
-            "handle": r["handle"],
+            "type":    "lead",
+            "handle":  r["handle"],
             "content": r["content"],
-            "action": r["action"],
-            "reason": r["reason"],
+            "action":  r["action"],
+            "reason":  r["reason"],
+            "comment": r.get("comment", ""),
         })
         if supabase and clerk_id:
             try:
                 supabase.table("market_leads").insert({
-                    "clerk_id": clerk_id,
-                    "platform": "twitter",
-                    "handle": r["handle"],
-                    "name": r["action"],
-                    "content": r["content"],
-                    "reason": r["reason"],
+                    "clerk_id":  clerk_id,
+                    "platform":  "twitter",
+                    "handle":    r["handle"],
+                    "name":      r["action"],
+                    "content":   r["content"],
+                    "reason":    r["reason"],
                     "avatar_url": ""
                 }).execute()
-                saved += 1
             except Exception as db_err:
                 await websocket.send_json({"type": "warn", "text": f"DB: {str(db_err)[:80]}"})
 
-    # 4. Session summary
-    likes = sum(1 for r in results if "like" in r.get("action",""))
-    follows = sum(1 for r in results if "follow" in r.get("action",""))
-    await websocket.send_json({"type": "success", "text": f"Session complete — {likes} likes, {follows} follows, {len(results)} interactions saved."})
+    # Session summary
+    likes    = sum(1 for r in results if "like"    in r.get("action", ""))
+    follows  = sum(1 for r in results if "follow"  in r.get("action", ""))
+    comments = sum(1 for r in results if r.get("comment"))
+    await websocket.send_json({
+        "type": "success",
+        "text": f"Session complete — {comments} comments, {likes} likes, {follows} follows. {len(results)} interactions total."
+    })
