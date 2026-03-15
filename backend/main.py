@@ -580,7 +580,9 @@ async def agent_stream(websocket: WebSocket):
             print(f"Agent received task: {task} from {clerk_id}")
 
             task_lower = task.strip().lower()
-            if any(kw in task_lower for kw in ["setup cookies", "set up cookies", "add cookies", "paste cookies", "cookie auth", "cookie login"]):
+            if task_lower in ["stop", "cancel", "abort", "quit", "exit"]:
+                await websocket.send_json({"type": "warn", "text": "Sessions run to completion — no active session to stop."})
+            elif any(kw in task_lower for kw in ["setup cookies", "set up cookies", "add cookies", "paste cookies", "cookie auth", "cookie login"]):
                 await setup_cookies_interactive(websocket, clerk_id=clerk_id, supabase=supabase)
             elif any(kw in task_lower for kw in ["setup login", "set up login", "login setup", "connect twitter", "connect x", "setup session"]):
                 await setup_login_interactive(websocket, clerk_id=clerk_id, supabase=supabase)

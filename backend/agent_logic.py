@@ -233,7 +233,7 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
     except Exception as ex:
         log_queue.append(("warn", f"Search failed, trying home timeline..."))
         try:
-            tweets = await client.get_home_timeline(count=num_posts * 2)
+            tweets = await client.get_latest_timeline(count=num_posts * 2)
             tweet_list = list(tweets)[:num_posts]
         except Exception as ex2:
             log_queue.append(("error", f"Could not fetch posts: {str(ex2)[:80]}"))
@@ -265,21 +265,12 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
 
             log_queue.append(("cmd", f"  → {action.upper()} — {reason}"))
 
-            if "like" in action:
-                try:
-                    await tweet.favorite()
-                    log_queue.append(("success", f"  ✓ Liked {handle}"))
-                    await asyncio.sleep(1.0)
-                except Exception as ex:
-                    log_queue.append(("warn", f"  Like failed: {str(ex)[:50]}"))
-
-            if "follow" in action and user:
-                try:
-                    await client.follow_user(user.id)
-                    log_queue.append(("success", f"  ✓ Followed {handle}"))
-                    await asyncio.sleep(1.5)
-                except Exception as ex:
-                    log_queue.append(("warn", f"  Follow failed: {str(ex)[:50]}"))
+            # ⚠ Auto-interactions disabled — scout only, no likes/follows
+            # Uncomment below only when rate-limiting is implemented
+            # if "like" in action:
+            #     await tweet.favorite()
+            # if "follow" in action and user:
+            #     await client.follow_user(user.id)
 
             results.append({
                 "handle": handle,
