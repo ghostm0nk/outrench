@@ -12,6 +12,16 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 # Ephemeral — cleared on server restart. User must run "setup login" again after redeploy.
 _stored_credentials: dict = {}
 
+# Per-sweep limits by timeframe — controls how aggressive each session is.
+# Scheduling (how often sessions repeat) is handled by the frontend timer.
+TIMEFRAME_CONFIG = {
+    "1hr":  {"posts": 8,  "max_likes": 3, "max_follows": 2, "max_comments": 1},
+    "2hr":  {"posts": 10, "max_likes": 4, "max_follows": 2, "max_comments": 1},
+    "5hr":  {"posts": 12, "max_likes": 5, "max_follows": 3, "max_comments": 2},
+    "24hr": {"posts": 15, "max_likes": 6, "max_follows": 3, "max_comments": 2},
+}
+DEFAULT_CONFIG = {"posts": 8, "max_likes": 3, "max_follows": 2, "max_comments": 1}
+
 
 async def get_ai_response(prompt: str, system_prompt: str = "You are a helpful AI assistant.") -> str:
     if not GROQ_API_KEY:
@@ -62,13 +72,14 @@ About the startup:
 Your job is to evaluate X/Twitter posts and decide how to engage on behalf of this startup.
 
 For each post, return a JSON object with:
-- "action": one of "like", "follow", "like_and_follow", or "skip"
+- "action": one of "like", "follow", "like_and_follow", "comment", or "skip"
 - "reason": one short sentence explaining your decision
 
 Guidelines:
 - "like" posts from people who match the target audience or are experiencing the problem this startup solves
 - "follow" accounts posting consistently relevant content worth tracking
 - "like_and_follow" for highly relevant potential customers or partners
+- "comment" ONLY for high-traction posts (replies, retweets, or likes suggest visibility) where a thoughtful reply from this startup's perspective would genuinely add value — not just agree or promote
 - "skip" for spam, irrelevant content, ads, or people clearly outside the target audience
 
 Return ONLY the JSON object. No markdown, no explanation outside it."""
@@ -77,13 +88,14 @@ Return ONLY the JSON object. No markdown, no explanation outside it."""
 Your job is to evaluate posts and decide how to interact, exactly like a senior market analyst building a personal brand.
 
 For each post, return a JSON object with:
-- "action": one of "like", "follow", "like_and_follow", or "skip"
+- "action": one of "like", "follow", "like_and_follow", "comment", or "skip"
 - "reason": one short sentence explaining your decision
 
 Guidelines:
 - "like" posts that are relevant, insightful, or align with the goal
 - "follow" accounts posting consistently good content worth tracking
 - "like_and_follow" for highly relevant accounts
+- "comment" ONLY for high-traction posts where a thoughtful reply would be visible and add real value
 - "skip" for spam, irrelevant content, or ads
 
 Return ONLY the JSON object. No markdown, no explanation outside it."""
@@ -112,6 +124,49 @@ Return ONLY the JSON object. No markdown, no explanation outside it."""
         return json.loads(text[start:end])
     except Exception as ex:
         return {"action": "skip", "reason": f"Eval error: {str(ex)[:40]}"}
+
+
+def _generate_comment(post_text: str, startup_context: dict) -> str:
+    """Generate a contextual reply in the startup's voice. Returns comment text or empty string on failure."""
+    if not GROQ_API_KEY:
+        return ""
+    name     = startup_context.get('name', 'us')
+    one_liner = startup_context.get('one_liner', '')
+    tone     = startup_context.get('tone', 'direct and genuine')
+    problem  = startup_context.get('problem_solved', '')
+
+    system = f"""You write short, human X/Twitter replies on behalf of {name} ({one_liner}).
+Tone: {tone}.
+Core problem we solve: {problem}.
+
+Rules:
+- 1-2 sentences max. No hashtags. No emojis unless the tone calls for it.
+- Sound like a real person, not a brand account.
+- Add genuine value — insight, a question, or a relatable observation.
+- Never mention the product name or pitch anything.
+- If you can't add value, return exactly: SKIP"""
+
+    try:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": os.getenv("GROQ_MODEL", GROQ_MODEL),
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": f"Write a reply to this post:\n\n{post_text[:400]}"}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 80
+            },
+            timeout=15.0
+        )
+        response.raise_for_status()
+        text = response.json()["choices"][0]["message"]["content"].strip()
+        return "" if text == "SKIP" else text
+    except Exception:
+        return ""
+
 
 async def setup_login_interactive(websocket, clerk_id: str = None, supabase=None) -> dict:
     """
@@ -218,7 +273,7 @@ async def setup_cookies_interactive(websocket, clerk_id: str = None, supabase=No
 # twikit session — lightweight HTTP-based X client, no browser required.
 # Runs in a dedicated OS thread via asyncio.run().
 # ─────────────────────────────────────────────────────────────────────────────
-async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: dict, startup_context: dict = None):
+async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: dict, startup_context: dict = None, limits: dict = None):
     from twikit import Client
 
     if not credentials:
@@ -268,6 +323,8 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
 
     loop = asyncio.get_event_loop()
     results = []
+    lim = limits or DEFAULT_CONFIG
+    like_count = follow_count = comment_count = 0
 
     for idx, tweet in enumerate(tweet_list):
         try:
@@ -287,23 +344,64 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
                 await asyncio.sleep(0.5)
                 continue
 
-            log_queue.append(("cmd", f"  → {action.upper()} — {reason}"))
+            # Enforce per-sweep caps — downgrade action if limit reached
+            wants_like    = "like" in action
+            wants_follow  = "follow" in action
+            wants_comment = action == "comment"
 
-            # ⚠ Auto-interactions disabled — scout only, no likes/follows
-            # Uncomment below only when rate-limiting is implemented
-            # if "like" in action:
-            #     await tweet.favorite()
-            # if "follow" in action and user:
-            #     await client.follow_user(user.id)
+            if wants_like   and like_count    >= lim["max_likes"]:    wants_like = False
+            if wants_follow and follow_count  >= lim["max_follows"]:  wants_follow = False
+            if wants_comment and comment_count >= lim["max_comments"]: wants_comment = False
+
+            if not wants_like and not wants_follow and not wants_comment:
+                log_queue.append(("warn", f"  → Cap reached, skipping {handle}"))
+                continue
+
+            # Build final action label
+            if wants_comment:
+                final_action = "comment"
+            elif wants_like and wants_follow:
+                final_action = "like_and_follow"
+            elif wants_like:
+                final_action = "like"
+            else:
+                final_action = "follow"
+
+            log_queue.append(("cmd", f"  → {final_action.upper()} — {reason}"))
+
+            # ── Execute interactions ──────────────────────────────────────────
+            comment_text = ""
+            try:
+                if wants_like:
+                    await tweet.favorite()
+                    like_count += 1
+                    await asyncio.sleep(1.5)
+
+                if wants_follow and user:
+                    await client.follow_user(user.id)
+                    follow_count += 1
+                    await asyncio.sleep(1.5)
+
+                if wants_comment and startup_context:
+                    comment_text = await loop.run_in_executor(None, _generate_comment, post_text, startup_context)
+                    if comment_text:
+                        await tweet.reply(comment_text)
+                        comment_count += 1
+                        log_queue.append(("info", f"  ↩ Commented: \"{comment_text[:80]}\""))
+                        await asyncio.sleep(2.0)
+
+            except Exception as act_err:
+                log_queue.append(("warn", f"  Action failed: {str(act_err)[:60]}"))
 
             results.append({
                 "handle": handle,
                 "content": post_text[:300],
-                "action": action,
-                "reason": reason
+                "action": final_action,
+                "reason": reason,
+                "comment": comment_text,
             })
 
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(2.0)
 
         except Exception as ex:
             log_queue.append(("warn", f"Skipped post #{idx+1}: {str(ex)[:60]}"))
@@ -311,17 +409,17 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
     log_queue.append(("__results__", results))
 
 
-def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: dict = None, startup_context: dict = None):
+def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: dict = None, startup_context: dict = None, limits: dict = None):
     """Entry point called from the OS thread — runs twikit async session."""
-    asyncio.run(_run_twikit(goal, log_queue, num_posts, credentials, startup_context))
+    asyncio.run(_run_twikit(goal, log_queue, num_posts, credentials, startup_context, limits))
 
 
-async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, supabase=None):
+async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, supabase=None, timeframe: str = None):
     """
-    Main execution loop.
-    Ghost Driver opens the home feed, reads posts, evaluates each with the LLM,
-    and interacts (like / follow) based on the user's goal.
+    Main execution loop. Runs one sweep — the frontend timer schedules repeats based on timeframe.
     """
+    limits = TIMEFRAME_CONFIG.get(timeframe, DEFAULT_CONFIG)
+    num_posts = limits["posts"]
 
     # 1. Fetch startup profile to give Spirit context
     startup_context = None
@@ -361,7 +459,7 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
 
     thread = threading.Thread(
         target=_run_session,
-        args=(user_input, log_queue, 8, credentials, startup_context),
+        args=(user_input, log_queue, num_posts, credentials, startup_context, limits),
         daemon=True
     )
     thread.start()

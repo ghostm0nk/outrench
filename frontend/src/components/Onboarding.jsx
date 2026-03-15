@@ -226,10 +226,11 @@ export default function Onboarding({ onComplete }) {
         padding: '24px 24px 12px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 12,
+        alignItems: 'center',
         scrollbarWidth: 'thin',
         scrollbarColor: 'rgba(255,255,255,0.06) transparent',
       }}>
+      <div style={{ width: '100%', maxWidth: 560, display: 'flex', flexDirection: 'column', gap: 12 }}>
         {lines.map(line => (
           <ChatLine key={line.id} line={line} />
         ))}
@@ -261,13 +262,14 @@ export default function Onboarding({ onComplete }) {
 
         <div ref={bottomRef} />
       </div>
+      </div>
 
       {/* Input */}
       {!done && (
+        <div style={{ margin: '0 auto 24px', width: '100%', maxWidth: 560, padding: '0 16px', boxSizing: 'border-box', flexShrink: 0 }}>
         <form
           onSubmit={handleSubmit}
           style={{
-            margin: '0 16px 24px',
             display: 'flex',
             alignItems: 'center',
             gap: 10,
@@ -275,7 +277,6 @@ export default function Onboarding({ onComplete }) {
             border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: 12,
             padding: '4px 4px 4px 14px',
-            flexShrink: 0,
           }}
         >
           <span style={{
@@ -329,6 +330,7 @@ export default function Onboarding({ onComplete }) {
             {saving ? <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={15} />}
           </button>
         </form>
+        </div>
       )}
 
       <style>{`
@@ -361,7 +363,7 @@ function ChatLine({ line }) {
       animation: 'fadeIn 0.25s ease-out',
     }}>
       <div style={{
-        maxWidth: '72%',
+        maxWidth: '85%',
         background: style.bg,
         border: `1px solid ${style.border}`,
         borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px',

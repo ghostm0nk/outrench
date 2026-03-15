@@ -577,6 +577,7 @@ async def agent_stream(websocket: WebSocket):
                 payload = json.loads(raw_data)
                 task = payload.get("task", "").strip()
                 clerk_id = payload.get("clerk_id")
+                timeframe = payload.get("timeframe")
             except:
                 task = raw_data.strip()
                 clerk_id = None
@@ -591,7 +592,7 @@ async def agent_stream(websocket: WebSocket):
             elif any(kw in task_lower for kw in ["setup login", "set up login", "login setup", "connect twitter", "connect x", "setup session"]):
                 await setup_login_interactive(websocket, clerk_id=clerk_id, supabase=supabase)
             else:
-                await stream_agent_logic(task, websocket, clerk_id=clerk_id, supabase=supabase)
+                await stream_agent_logic(task, websocket, clerk_id=clerk_id, supabase=supabase, timeframe=timeframe)
                 
     except WebSocketDisconnect:
         print("Agent WebSocket disconnected.")

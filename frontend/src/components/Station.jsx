@@ -20,9 +20,24 @@ import {
 //   [Terminal  |  Task Panel]
 //   [Message Input]
 // ─────────────────────────────────────────────────────────────────────────────
+// Repeat intervals in milliseconds for each timeframe
+const TIMEFRAME_INTERVALS = {
+  '1hr':  null,           // run once, no repeat
+  '2hr':  55 * 60 * 1000, // every 55min → 2 sessions over 2hrs
+  '5hr':  60 * 60 * 1000, // every 60min → 5 sessions over 5hrs
+  '24hr': 3 * 60 * 60 * 1000, // every 3hrs → 8 sessions over 24hrs
+};
+
 export default function Station() {
   const { user } = useUser();
   const [input, setInput] = useState('');
+  const [timeframe, setTimeframe] = useState(null); // null | '1hr' | '2hr' | '5hr' | '24hr'
+  const timeframeRef = useRef(null);
+  const [wanderCountdown, setWanderCountdown] = useState(null); // seconds until next wander
+  const lastTaskRef = useRef('');
+  const wanderTimerRef = useRef(null);
+  const countdownTickRef = useRef(null);
+
   // Session scoreboard — totals accumulate from backend save confirmations
   const [sessionStats, setSessionStats] = useState({ leads: 0, drafts: 0, trends: 0, runs: 0 });
   // Last 5 commands this session
@@ -38,6 +53,34 @@ export default function Station() {
       { id: Date.now() + Math.random(), timestamp: Date.now(), type, text },
     ]);
   }, []);
+
+  // Schedule next wander after session completes
+  const scheduleNextWander = useCallback((tf) => {
+    const interval = TIMEFRAME_INTERVALS[tf];
+    if (!interval || !lastTaskRef.current) return;
+
+    clearTimeout(wanderTimerRef.current);
+    clearInterval(countdownTickRef.current);
+
+    let remaining = Math.floor(interval / 1000);
+    setWanderCountdown(remaining);
+
+    countdownTickRef.current = setInterval(() => {
+      remaining -= 1;
+      setWanderCountdown(remaining);
+      if (remaining <= 0) clearInterval(countdownTickRef.current);
+    }, 1000);
+
+    wanderTimerRef.current = setTimeout(() => {
+      clearInterval(countdownTickRef.current);
+      setWanderCountdown(null);
+      // Auto-fire the last task
+      if (socketRef.current?.readyState === WebSocket.OPEN && lastTaskRef.current) {
+        pushLine('info', `Spirit waking for next wander (${tf} schedule)...`);
+        socketRef.current.send(JSON.stringify({ task: lastTaskRef.current, clerk_id: user?.id, timeframe: tf }));
+      }
+    }, interval);
+  }, [pushLine, user?.id]);
 
   // Parse "Saved to database: 3 leads, 2 drafts, 1 trend" into numbers
   const parseSaveLine = useCallback((text) => {
@@ -152,6 +195,11 @@ export default function Station() {
             if (data.type && data.text) {
               pushLine(data.type, data.text);
               if (data.type === 'success') parseSaveLine(data.text);
+              // Session complete — schedule next wander if timeframe is set
+              if (data.type === 'success' && data.text.includes('Session complete')) {
+                const tf = timeframeRef.current;
+                if (tf) scheduleNextWander(tf);
+              }
             }
           } catch (err) {
             console.error('WS parse error', err);
@@ -180,6 +228,17 @@ export default function Station() {
   useEffect(() => {
     connectRef.current = connect; // keep ref in sync
   }, [connect]);
+
+  // Keep timeframeRef in sync
+  useEffect(() => {
+    timeframeRef.current = timeframe;
+    // If timeframe cleared, cancel any pending wander
+    if (!timeframe) {
+      clearTimeout(wanderTimerRef.current);
+      clearInterval(countdownTickRef.current);
+      setWanderCountdown(null);
+    }
+  }, [timeframe]);
 
   useEffect(() => {
     unmountedRef.current = false;
@@ -214,8 +273,9 @@ export default function Station() {
 
     // Normal command
     pushLine('cmd', cmd);
+    lastTaskRef.current = cmd;
     setCmdHistory(prev => [{ id: Date.now(), text: cmd, ts: Date.now() }, ...prev].slice(0, 5));
-    socketRef.current.send(JSON.stringify({ task: cmd, clerk_id: user?.id }));
+    socketRef.current.send(JSON.stringify({ task: cmd, clerk_id: user?.id, timeframe: timeframeRef.current }));
     setInput('');
   };
 
@@ -245,7 +305,12 @@ export default function Station() {
         minHeight: 0,
       }}>
         {/* Left: Terminal */}
-        <TerminalPanel lines={lines} />
+        <TerminalPanel
+          lines={lines}
+          timeframe={timeframe}
+          onTimeframeChange={setTimeframe}
+          wanderCountdown={wanderCountdown}
+        />
 
         {/* Right: Session Results */}
         <ResultsPanel stats={sessionStats} history={cmdHistory} leads={leads} />
@@ -363,12 +428,24 @@ function NotificationBar({ status, message, detail, expanded, onToggle }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Terminal Panel (left)
 // ─────────────────────────────────────────────────────────────────────────────
-function TerminalPanel({ lines }) {
+const TIMEFRAMES = ['1hr', '2hr', '5hr', '24hr'];
+
+function TerminalPanel({ lines, timeframe, onTimeframeChange, wanderCountdown }) {
   const bottomRef = useRef(null);
   const [fontSize, setFontSize] = useState(13); // Default in px
 
   const zoomIn = () => setFontSize(prev => Math.min(prev + 1, 24));
   const zoomOut = () => setFontSize(prev => Math.max(prev - 1, 9));
+
+  const formatCountdown = (secs) => {
+    if (secs == null) return null;
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -408,10 +485,48 @@ function TerminalPanel({ lines }) {
           fontFamily: '"PPSupplyMono", monospace',
           color: 'rgba(255,255,255,0.3)',
           letterSpacing: '0.05em',
-          marginLeft: 8
+          marginLeft: 8,
+          marginRight: 10,
         }}>
           Spirit
         </span>
+
+        {/* Timeframe pills */}
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {TIMEFRAMES.map(tf => (
+            <button
+              key={tf}
+              onClick={() => onTimeframeChange(timeframe === tf ? null : tf)}
+              style={{
+                padding: '2px 8px',
+                borderRadius: 999,
+                border: `1px solid ${timeframe === tf ? 'rgba(129,140,248,0.6)' : 'rgba(255,255,255,0.08)'}`,
+                background: timeframe === tf ? 'rgba(99,102,241,0.2)' : 'transparent',
+                color: timeframe === tf ? '#818cf8' : 'rgba(255,255,255,0.25)',
+                fontSize: 10,
+                fontFamily: '"PPSupplyMono", monospace',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                letterSpacing: '0.04em',
+              }}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
+
+        {/* Wander countdown */}
+        {wanderCountdown != null && (
+          <span style={{
+            fontSize: 10,
+            fontFamily: '"PPSupplyMono", monospace',
+            color: '#f59e0b',
+            marginLeft: 8,
+            animation: 'pulse 1.5s ease-in-out infinite',
+          }}>
+            ↺ {formatCountdown(wanderCountdown)}
+          </span>
+        )}
 
         {/* Zoom Controls */}
         <div style={{
