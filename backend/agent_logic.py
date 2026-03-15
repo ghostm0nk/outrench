@@ -41,7 +41,7 @@ async def get_ai_response(prompt: str, system_prompt: str = "You are a helpful A
         return f"Error connecting to Groq: {str(e)}"
 
 
-def _evaluate_post(post_text: str, goal: str) -> dict:
+def _evaluate_post(post_text: str, goal: str, startup_context: dict = None) -> dict:
     """
     Synchronous LLM call to evaluate a post and decide how to interact.
     Returns: {"action": "like" | "follow" | "skip", "reason": str}
@@ -49,7 +49,31 @@ def _evaluate_post(post_text: str, goal: str) -> dict:
     if not GROQ_API_KEY:
         return {"action": "skip", "reason": "No API key"}
 
-    system = """You are an autonomous growth analyst browsing X/Twitter.
+    if startup_context:
+        system = f"""You are Spirit, the AI growth agent for {startup_context.get('name', 'a startup')}.
+
+About the startup:
+- What they do: {startup_context.get('one_liner', 'N/A')}
+- Target audience: {startup_context.get('target_audience', 'N/A')}
+- Problem they solve: {startup_context.get('problem_solved', 'N/A')}
+- Unique value: {startup_context.get('unique_value', 'N/A')}
+- Tone: {startup_context.get('tone', 'casual')}
+
+Your job is to evaluate X/Twitter posts and decide how to engage on behalf of this startup.
+
+For each post, return a JSON object with:
+- "action": one of "like", "follow", "like_and_follow", or "skip"
+- "reason": one short sentence explaining your decision
+
+Guidelines:
+- "like" posts from people who match the target audience or are experiencing the problem this startup solves
+- "follow" accounts posting consistently relevant content worth tracking
+- "like_and_follow" for highly relevant potential customers or partners
+- "skip" for spam, irrelevant content, ads, or people clearly outside the target audience
+
+Return ONLY the JSON object. No markdown, no explanation outside it."""
+    else:
+        system = """You are Spirit, an autonomous growth agent browsing X/Twitter.
 Your job is to evaluate posts and decide how to interact, exactly like a senior market analyst building a personal brand.
 
 For each post, return a JSON object with:
@@ -194,7 +218,7 @@ async def setup_cookies_interactive(websocket, clerk_id: str = None, supabase=No
 # twikit session — lightweight HTTP-based X client, no browser required.
 # Runs in a dedicated OS thread via asyncio.run().
 # ─────────────────────────────────────────────────────────────────────────────
-async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: dict):
+async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: dict, startup_context: dict = None):
     from twikit import Client
 
     if not credentials:
@@ -254,7 +278,7 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
             preview = post_text[:70].replace('\n', ' ')
             log_queue.append(("info", f"Evaluating [{idx+1}/{len(tweet_list)}] {handle}: \"{preview}...\""))
 
-            decision = await loop.run_in_executor(None, _evaluate_post, post_text, goal)
+            decision = await loop.run_in_executor(None, _evaluate_post, post_text, goal, startup_context)
             action = decision.get("action", "skip")
             reason = decision.get("reason", "")
 
@@ -287,9 +311,9 @@ async def _run_twikit(goal: str, log_queue: list, num_posts: int, credentials: d
     log_queue.append(("__results__", results))
 
 
-def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: dict = None):
+def _run_session(goal: str, log_queue: list, num_posts: int = 8, credentials: dict = None, startup_context: dict = None):
     """Entry point called from the OS thread — runs twikit async session."""
-    asyncio.run(_run_twikit(goal, log_queue, num_posts, credentials))
+    asyncio.run(_run_twikit(goal, log_queue, num_posts, credentials, startup_context))
 
 
 async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, supabase=None):
@@ -299,8 +323,22 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
     and interacts (like / follow) based on the user's goal.
     """
 
-    # 1. Acknowledge
-    await websocket.send_json({"type": "ai_response", "text": f"Ghost Driver activated. Mission: '{user_input}'"})
+    # 1. Fetch startup profile to give Spirit context
+    startup_context = None
+    if supabase and clerk_id:
+        try:
+            res = supabase.table("startups").select("*").eq("clerk_id", clerk_id).execute()
+            if res.data:
+                startup_context = res.data[0]
+                startup_name = startup_context.get("name", "your startup")
+                await websocket.send_json({"type": "info", "text": f"Spirit loaded profile for {startup_name}."})
+            else:
+                await websocket.send_json({"type": "warn", "text": "No startup profile found — complete onboarding for smarter scouting."})
+        except Exception as e:
+            await websocket.send_json({"type": "warn", "text": f"Could not load startup profile: {str(e)[:60]}"})
+
+    # 2. Acknowledge
+    await websocket.send_json({"type": "ai_response", "text": f"Spirit activated. Mission: '{user_input}'"})
     await asyncio.sleep(0.3)
     await websocket.send_json({"type": "info", "text": "Initializing X session..."})
 
@@ -323,7 +361,7 @@ async def stream_agent_logic(user_input: str, websocket, clerk_id: str = None, s
 
     thread = threading.Thread(
         target=_run_session,
-        args=(user_input, log_queue, 8, credentials),
+        args=(user_input, log_queue, 8, credentials, startup_context),
         daemon=True
     )
     thread.start()

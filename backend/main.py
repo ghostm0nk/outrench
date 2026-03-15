@@ -121,6 +121,8 @@ class OnboardingRequest(BaseModel):
     problem_solved: str = ""
     unique_value: str = ""
     tone: str = "casual"
+    account_types: str = "both"   # personal | product | both
+    mode: str = "growth"           # growth | content | both
 
 
 class ChannelCredentialsRequest(BaseModel):
@@ -383,6 +385,8 @@ async def save_onboarding(req: OnboardingRequest):
             "problem_solved": req.problem_solved,
             "unique_value": req.unique_value,
             "tone": req.tone,
+            "account_types": req.account_types,
+            "mode": req.mode,
         }
         supabase.table("startups").upsert(startup_data, on_conflict="clerk_id").execute()
 

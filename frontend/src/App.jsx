@@ -4,6 +4,9 @@ import { Loader2, Sparkles, X, Mail, Lock, Eye, EyeOff, User, Send } from 'lucid
 import axios from 'axios';
 import outrenchLogo from './assets/outrench.png';
 import Dashboard from './components/Dashboard';
+import Onboarding from './components/Onboarding';
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Lazy-load the heavy Three.js component so it doesn't block the dashboard
 const SpectralGhost = lazy(() => import('./components/SpectralGhost'));
@@ -438,6 +441,33 @@ function App() {
 
 // ── Signed-In Router: checks onboarding status ──────────────────────────────
 function SignedInRouter() {
+  const { user } = useUser();
+  const [status, setStatus] = useState('loading'); // 'loading' | 'onboarding' | 'dashboard'
+
+  useEffect(() => {
+    if (!user?.id) return;
+    axios.get(`${API}/api/onboarding/status/${user.id}`)
+      .then(res => setStatus(res.data.onboarded ? 'dashboard' : 'onboarding'))
+      .catch(() => setStatus('onboarding')); // if check fails, show onboarding
+  }, [user?.id]);
+
+  if (status === 'loading') {
+    return (
+      <div style={{
+        height: '100vh', background: '#0f0c08',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: 'rgba(255,255,255,0.2)',
+      }}>
+        <Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }} />
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  if (status === 'onboarding') {
+    return <Onboarding onComplete={() => setStatus('dashboard')} />;
+  }
+
   return <Dashboard />;
 }
 
